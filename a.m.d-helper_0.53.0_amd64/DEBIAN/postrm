@@ -1,7 +1,0 @@
-#!/bin/bash
-set -e
-echo "Running post-removal cleanup..."
-rm -f /tmp/a.m.d-helper-install.log
-rm -f /tmp/a.m.d-helper-uninstall.log
-echo "A.M.D-HELPER has been uninstalled."
-exit 0

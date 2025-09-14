@@ -1,8 +1,0 @@
-[Desktop Entry]
-Name=A.M.D-HELPER
-Comment=A screen reader and OCR application.
-Exec=/usr/share/a.m.d-helper/tray.sh
-Icon=/usr/share/a.m.d-helper/about.png
-Terminal=false
-Type=Application
-Categories=Utility;Accessibility;

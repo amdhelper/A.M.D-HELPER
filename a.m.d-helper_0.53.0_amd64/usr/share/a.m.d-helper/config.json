@@ -1,9 +1,0 @@
-{
-    "tts_model": "piper",
-    "active_piper_model": "zh",
-    "piper_models": {
-        "en": "models/en_US-kristin-medium.onnx",
-        "zh": "models/zh_CN-huayan-medium.onnx"
-    },
-    "language": "zh_CN"
-}
