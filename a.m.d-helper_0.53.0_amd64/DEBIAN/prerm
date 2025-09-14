@@ -1,0 +1,60 @@
+#!/bin/bash
+set -e
+
+APP_DIR="/usr/share/a.m.d-helper"
+LOG_FILE="/tmp/a.m.d-helper-uninstall.log"
+
+echo "Starting A.M.D-HELPER pre-removal cleanup..." > "$LOG_FILE"
+exec >> "$LOG_FILE" 2>&1
+
+REAL_USER=${SUDO_USER:-$(whoami)}
+USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+
+echo "Cleanup for user: $REAL_USER"
+
+echo "Stopping any running A.M.D-HELPER processes..."
+pkill -f "$APP_DIR/tray.py" || true
+
+if command -v gsettings &> /dev/null && [ -n "$USER_HOME" ]; then
+    echo "Attempting to remove GNOME keyboard shortcut..."
+    
+    DBUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+    if [ -z "$XDG_RUNTIME_DIR" ]; then
+        XDG_RUNTIME_DIR="/run/user/$(id -u $REAL_USER)"
+        DBUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+    fi
+
+    run_gsettings() { sudo -u "$REAL_USER" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDRESS" timeout 5 gsettings "$@"; }
+
+    SHORTCUT_APP_NAME="A.M.D-HELPER OCR"
+    
+    # Loop through all possible slots to ensure all instances are cleaned up
+    for i in {0..19}; do
+        SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+        EXISTING_NAME=$(run_gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
+
+        if [[ "$EXISTING_NAME" == "'$SHORTCUT_APP_NAME'" ]]; then
+            echo "Found keybinding in slot custom$i. Removing it."
+            SLOT_URI="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+            
+            # Remove the URI from the main list of custom keybindings
+            CURRENT_BINDINGS_STR=$(run_gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | sed "s/@as //")
+            if [[ "$CURRENT_BINDINGS_STR" =~ "$SLOT_URI" ]]; then
+                NEW_BINDINGS_STR=$(python3 -c "import sys, ast; l=ast.literal_eval(sys.argv[1]); l.remove(sys.argv[2]); print(l)" "$CURRENT_BINDINGS_STR" "$SLOT_URI")
+                run_gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW_BINDINGS_STR"
+            fi
+
+            # Reset the specific slot's settings to clear it completely
+            KEYBINDING_PATH="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:$SLOT_URI"
+            run_gsettings reset "$KEYBINDING_PATH" name
+            run_gsettings reset "$KEYBINDING_PATH" command
+            run_gsettings reset "$KEYBINDING_PATH" binding
+            echo "Keyboard shortcut in slot custom$i removed."
+        fi
+    done
+fi
+
+rm -f /etc/xdg/autostart/a.m.d-helper.desktop
+
+echo "Pre-removal cleanup complete."
+exit 0

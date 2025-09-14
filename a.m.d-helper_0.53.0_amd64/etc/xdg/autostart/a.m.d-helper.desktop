@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=A.M.D-HELPER Tray
+Comment=Start the A.M.D-HELPER accessibility service
+Exec=/usr/share/a.m.d-helper/tray.sh
+Icon=/usr/share/a.m.d-helper/about.png
+Terminal=false
+Type=Application
+X-GNOME-Autostart-enabled=true
