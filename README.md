@@ -1,7 +1,7 @@
 # A.M.D-HELPER
 A mini program that helps patients with macular degeneration read text aloud.
 这是一个运行在wayland环境下的视障辅助工具，帮助黄斑变性患者轻松的获取屏幕上的文本信息.只需要轻松按下"f4"快捷键,程序就能够识别屏幕上任意区域的文字或鼠标悬停处的文字，并将其朗读出来。
-程序可以应对在线和离线的不同状况,在线tts使用的是edge-tts,离线模型使用的是piper-tts.目前只吃了建中,繁中和英文.
+程序可以应对在线和离线的不同状况,在线tts使用的是edge-tts,离线模型使用的是piper-tts.目前支持了简体中文,繁体中文和英文.
 希望这个小程序可以帮助到视障用户,特别是注射新冠疫苗以后发生眼底病变的朋友,电脑还是可以用的,但是尽量少用眼,尽量用听的.
 
 ## ⚙️ deb包安装方式
