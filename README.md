@@ -5,7 +5,9 @@ A mini program that helps patients with macular degeneration read text aloud.
 希望这个小程序可以帮助到视障用户,特别是注射新冠疫苗以后发生眼底病变的朋友,电脑还是可以用的,但是尽量少用眼,尽量用听的.
 
 ## ⚙️ deb包安装方式
+如果你是视障用户,因为deb包里面已经包含了piper-tts的模型文件,所以推荐用deb包的方式全自动安装最省心.
 deb包安装好以后,程序会自动设置好"f4"键为默认触发快捷键.当程序第一次运行下载好所需的模型以后,右上角会出现托盘绿色图标,这时候您就可以直接按下"f4"按键触发程序开始截图,框选文字后程序就会朗读文字.
+
 ```bash
 sudo dpkg -i a.m.d-helper_0.53.0_amd64.deb && sudo apt-get -f install && /usr/share/a.m.d-helper/run_with_init.sh
 ```
