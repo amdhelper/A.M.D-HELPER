@@ -1,4 +1,3 @@
-```markdown
 # A.M.D-HELPER
 A mini program that helps patients with macular degeneration read text aloud.
 This is a visual impairment assistance tool running in a Wayland environment, designed to help patients with macular degeneration easily obtain text information from the screen. Simply press the "F4" hotkey, and the program can recognize text in any area of the screen or text under the mouse cursor, and read it out loud.
