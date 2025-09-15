@@ -1,0 +1,10 @@
+# 忽略指定文件
+
+a.m.d-helper_0.53.0_amd64/
+
+# 忽略 build 文件夹及其所有内容
+build/
+models/
+libshot/venv/
+# 忽略所有 .deb 文件
+*.deb
