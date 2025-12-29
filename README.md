@@ -48,3 +48,17 @@ models
 python3 tray.py
 ```
 OCR模型由 `easyocr` 库自动管理。在您第一次运行程序时，它会自动下载所需的语言模型（如中文和英文），您只需耐心等待即可。当您看到右上角的绿色图标出现以后,可以点击自定义快捷键设置触发快捷键,程序提供了命令,可以直接复制粘贴使用.自启动也可以一键跳转,复制粘贴设置.
+
+关于日志
+程序的报错日志主要存储在 /tmp
+  目录下，具体路径取决于运行的组件：
+
+   1. 托盘程序日志：/tmp/a.m.d-helper-tray.log（由 tray.py 和 tray.sh 使用）
+   2. F1 悬浮窗日志：/tmp/a.m.d-helper-f1.log（由 run_hover.sh 定义）
+   3. F4 主程序日志：/tmp/a.m.d-helper-f4.log（由 run.sh 定义）
+
+  此外，安装和卸载过程的日志分别位于 /tmp/a.m.d-helper-install.log 和
+  /tmp/a.m.d-helper-uninstall.log。
+
+  如果您需要查看运行时的实时报错，通常检查 `/tmp/a.m.d-helper-f4.log` 或
+  `/tmp/a.m.d-helper-tray.log` 是最直接的。
