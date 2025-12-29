@@ -6,12 +6,17 @@ import os
 import asyncio
 import threading
 from threading import Event
+import logging
+import traceback
 
 import json
 import os
 import tempfile
 import asyncio
 from threading import Event
+
+# 获取 logger
+logger = logging.getLogger("AMD-HELPER")
 
 # Import existing components
 from screenshot import Screenshotter
@@ -73,43 +78,61 @@ class OcrAndTtsProcessor:
 
     def run_full_process(self):
         """执行截图 -> OCR -> TTS -> 音频播放的完整流程。"""
-        print("\n=== (核心) 收到请求，开始处理流程 ===")
+        logger.info("=== (核心) 收到请求，开始处理流程 ===")
+        logger.debug(f"当前 TTS 引擎类型: {type(self.tts_engine).__name__}")
         
         try:
             # 1. 立即进行截图
+            logger.debug("步骤1: 开始截图...")
             image_path = self.screenshotter.take_screenshot()
 
             if not image_path:
-                print("流程中断：用户取消了截图。" )
+                logger.info("流程中断：用户取消了截图。")
                 return
             self._temp_files.append(image_path)
+            logger.debug(f"截图完成: {image_path}")
 
             # 2. OCR 识别
+            logger.debug("步骤2: 开始 OCR 识别...")
             text, ocr_lang = self.ocr_engine.recognize(image_path)
             if not text:
-                print("流程中断：未识别到文字。" )
+                logger.info("流程中断：未识别到文字。")
                 return
             
-            print(f"ℹ️ OCR 识别语言: {ocr_lang}，将使用此语言进行语音合成。")
+            logger.info(f"OCR 识别语言: {ocr_lang}，识别文字: {text[:50]}...")
+            logger.debug(f"完整识别文字: {text}")
 
             # 3. TTS 合成
-            # 注意：此处不再重新加载引擎，而是使用初始化或reload时设置的引擎
+            logger.debug(f"步骤3: 开始 TTS 合成，使用引擎: {type(self.tts_engine).__name__}")
             audio_suffix = '.wav' if isinstance(self.tts_engine, PiperTtsEngine) else '.mp3'
+            logger.debug(f"音频格式: {audio_suffix}")
+            
             with tempfile.NamedTemporaryFile(suffix=audio_suffix, delete=False) as temp_audio_file:
                 audio_path = temp_audio_file.name
             self._temp_files.append(audio_path)
+            logger.debug(f"临时音频文件: {audio_path}")
             
             # 直接使用 OCR 识别出的语言进行合成
-            asyncio.run(self.tts_engine.synthesize(text, audio_path, lang=ocr_lang))
+            try:
+                logger.debug(f"调用 TTS synthesize: text={text[:30]}..., path={audio_path}, lang={ocr_lang}")
+                asyncio.run(self.tts_engine.synthesize(text, audio_path, lang=ocr_lang))
+                logger.debug(f"TTS 合成完成，检查文件是否存在: {os.path.exists(audio_path)}, 大小: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'}")
+            except Exception as tts_error:
+                logger.error(f"TTS 合成失败: {tts_error}")
+                logger.error(f"TTS 错误详情:\n{traceback.format_exc()}")
+                raise
 
             # 4. 播放音频
+            logger.debug("步骤4: 开始播放音频...")
             self.audio_player.play(audio_path, stop_event=self._stop_event)
+            logger.debug("音频播放完成")
 
         except Exception as e:
-            print(f"❌ 处理过程中出现错误: {e}")
+            logger.error(f"处理过程中出现错误: {e}")
+            logger.error(f"错误详情:\n{traceback.format_exc()}")
         finally:
             self._cleanup_files()
-            print("=== (核心) 流程结束 ===")
+            logger.info("=== (核心) 流程结束 ===")
 
 
     def cleanup(self):

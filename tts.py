@@ -7,6 +7,11 @@ import subprocess
 import os
 import shutil
 import sys
+import logging
+import traceback
+
+# 获取 logger
+logger = logging.getLogger("AMD-HELPER")
 
 # --- 路径处理 ---
 # 获取脚本所在的目录
@@ -23,53 +28,100 @@ class TtsEngine:
 class EdgeTtsEngine(TtsEngine):
     """使用 edge-tts 命令行工具合成语音"""
     async def synthesize(self, text: str, output_path: str, lang: str = 'auto'):
-        # Edge TTS v6+ 可以自动检测语言，因此 lang 参数在这里主要用于日志或未来可能的特定逻辑
-        print("🔄 使用 Edge-TTS 进行语音合成...")
+        logger.info("🔄 使用 Edge-TTS 进行语音合成...")
         voice = "zh-CN-XiaoxiaoNeural" if lang == 'zh' else "en-US-JennyNeural"
+        logger.debug(f"Edge-TTS 参数: voice={voice}, lang={lang}, output={output_path}")
+        logger.debug(f"合成文本: {text[:100]}...")
+        
+        # --- 自动查找 edge-tts 可执行文件 ---
+        edge_tts_executable = shutil.which('edge-tts')
+        logger.debug(f"shutil.which('edge-tts') 结果: {edge_tts_executable}")
+        
+        if not edge_tts_executable:
+            # 兼容 venv 环境：在当前 Python 解释器所在目录查找
+            py_dir = os.path.dirname(sys.executable)
+            maybe_path = os.path.join(py_dir, 'edge-tts')
+            logger.debug(f"尝试 venv 路径: {maybe_path}, 存在: {os.path.exists(maybe_path)}")
+            if os.path.exists(maybe_path):
+                edge_tts_executable = maybe_path
+        
+        if not edge_tts_executable:
+            logger.error("找不到 'edge-tts' 可执行文件")
+            logger.debug(f"当前 PATH: {os.environ.get('PATH', 'N/A')}")
+            logger.debug(f"Python 可执行文件: {sys.executable}")
+            raise FileNotFoundError("找不到 'edge-tts' 可执行文件。请确保 'edge-tts' 已通过 pip 安装。")
+        
+        logger.debug(f"使用 edge-tts 路径: {edge_tts_executable}")
         
         command = [
-            "edge-tts",
+            edge_tts_executable,
             "--voice", voice,
             "--text", text,
             "--write-media", output_path
         ]
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        stdout, stderr = await process.communicate()
+        logger.debug(f"执行命令: {' '.join(command)}")
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            
+            logger.debug(f"Edge-TTS 返回码: {process.returncode}")
+            if stdout:
+                logger.debug(f"Edge-TTS stdout: {stdout.decode()}")
+            if stderr:
+                logger.debug(f"Edge-TTS stderr: {stderr.decode()}")
 
-        if process.returncode != 0:
-            print(f"❌ Edge-TTS 错误: {stderr.decode()}")
-            raise RuntimeError("Edge-TTS synthesis failed")
-        else:
-            print(f"✅ 语音已保存到: {output_path}")
+            if process.returncode != 0:
+                logger.error(f"Edge-TTS 错误 (返回码 {process.returncode}): {stderr.decode()}")
+                raise RuntimeError(f"Edge-TTS synthesis failed: {stderr.decode()}")
+            else:
+                # 验证输出文件
+                if os.path.exists(output_path):
+                    file_size = os.path.getsize(output_path)
+                    logger.info(f"✅ 语音已保存到: {output_path} (大小: {file_size} bytes)")
+                else:
+                    logger.error(f"Edge-TTS 声称成功但输出文件不存在: {output_path}")
+                    raise RuntimeError("Edge-TTS output file not created")
+        except Exception as e:
+            logger.error(f"Edge-TTS 执行异常: {e}")
+            logger.error(f"异常详情:\n{traceback.format_exc()}")
+            raise
 
 import sys
 
 class PiperTtsEngine(TtsEngine):
     """使用 piper 命令行工具合成语音"""
     async def synthesize(self, text: str, output_path: str, lang: str = 'zh'):
-        print("🔄 使用 Piper-TTS 进行语音合成...")
+        logger.info("🔄 使用 Piper-TTS 进行语音合成...")
+        logger.debug(f"Piper-TTS 参数: lang={lang}, output={output_path}")
         
         # --- 自动查找 Piper 可执行文件 ---
         piper_executable = shutil.which('piper')
+        logger.debug(f"shutil.which('piper') 结果: {piper_executable}")
+        
         if not piper_executable:
             # 兼容 venv 环境
             py_dir = os.path.dirname(sys.executable)
             maybe_path = os.path.join(py_dir, 'piper')
+            logger.debug(f"尝试 venv 路径: {maybe_path}, 存在: {os.path.exists(maybe_path)}")
             if os.path.exists(maybe_path):
                 piper_executable = maybe_path
 
         if not piper_executable:
+            logger.error("找不到 'piper' 可执行文件")
             raise FileNotFoundError("找不到 'piper' 可执行文件。请确保 'piper-tts' 已通过 pip 安装。")
 
         # --- 模型路径处理 ---
         model_name = "zh_CN-huayan-medium.onnx" if lang == 'zh' else "en_US-kristin-medium.onnx"
         model_path = os.path.join(SCRIPT_DIR, "models", model_name)
+        logger.debug(f"Piper 模型路径: {model_path}, 存在: {os.path.exists(model_path)}")
 
         if not os.path.exists(model_path):
+            logger.error(f"TTS 模型文件未找到: {model_path}")
             raise FileNotFoundError(f"TTS 模型文件未找到: {model_path}")
 
         command = [
@@ -78,32 +130,50 @@ class PiperTtsEngine(TtsEngine):
             "--output_file", output_path
         ]
         
-        print(f"Piper command: {' '.join(command)}")
+        logger.debug(f"Piper command: {' '.join(command)}")
         
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        
-        stdout, stderr = await process.communicate(input=text.encode('utf-8'))
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate(input=text.encode('utf-8'))
+            
+            logger.debug(f"Piper 返回码: {process.returncode}")
+            if stdout:
+                logger.debug(f"Piper stdout: {stdout.decode()}")
+            if stderr:
+                logger.debug(f"Piper stderr: {stderr.decode()}")
 
-        if process.returncode != 0:
-            print(f"❌ Piper-TTS 错误: {stderr.decode()}")
-            raise RuntimeError("Piper-TTS synthesis failed")
-        else:
-            print(f"✅ 语音已保存到: {output_path}")
+            if process.returncode != 0:
+                logger.error(f"Piper-TTS 错误: {stderr.decode()}")
+                raise RuntimeError("Piper-TTS synthesis failed")
+            else:
+                if os.path.exists(output_path):
+                    file_size = os.path.getsize(output_path)
+                    logger.info(f"✅ 语音已保存到: {output_path} (大小: {file_size} bytes)")
+                else:
+                    logger.error(f"Piper 声称成功但输出文件不存在: {output_path}")
+                    raise RuntimeError("Piper output file not created")
+        except Exception as e:
+            logger.error(f"Piper-TTS 执行异常: {e}")
+            logger.error(f"异常详情:\n{traceback.format_exc()}")
+            raise
 
 def _get_config():
     """读取用户配置文件"""
     try:
         # 确保始终读取用户特定的配置文件
         with open(USER_CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+            config = json.load(f)
+            logger.debug(f"tts.py 读取配置: {config}")
+            return config
+    except (FileNotFoundError, json.JSONDecodeError) as e:
         # 如果文件不存在或格式错误，返回一个安全的默认值
-        print(f"⚠️ tts.py: 无法从 '{USER_CONFIG_PATH}' 读取配置，将回退到默认引擎。")
+        logger.warning(f"tts.py: 无法从 '{USER_CONFIG_PATH}' 读取配置 ({e})，将回退到默认引擎。")
         return {"tts_model": "piper"}
 
 def get_tts_engine(config: dict = None) -> TtsEngine:
@@ -116,12 +186,15 @@ def get_tts_engine(config: dict = None) -> TtsEngine:
     
     model_type = config.get("tts_model", "piper") # 默认使用piper以保证离线可用性
 
-    print(f"ℹ️ 根据配置加载TTS引擎: {model_type}")
+    logger.info(f"ℹ️ 根据配置加载TTS引擎: {model_type}")
+    logger.debug(f"完整配置: {config}")
 
     if model_type == "piper":
+        logger.debug("创建 PiperTtsEngine 实例")
         return PiperTtsEngine()
     elif model_type == "edge":
+        logger.debug("创建 EdgeTtsEngine 实例")
         return EdgeTtsEngine()
     else:
-        print(f"⚠️ 未知的TTS模型类型 '{model_type}'，将默认使用 Piper-TTS。")
+        logger.warning(f"未知的TTS模型类型 '{model_type}'，将默认使用 Piper-TTS。")
         return PiperTtsEngine()

@@ -15,6 +15,9 @@ import subprocess
 import shutil
 import smtplib
 import requests
+import logging
+import traceback
+from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from PIL import Image, ImageDraw
@@ -25,6 +28,28 @@ from pystray import MenuItem, Menu
 from dbus_next.service import ServiceInterface, method
 from dbus_next.aio import MessageBus
 from dbus_next.constants import BusType, NameFlag
+
+# --- 日志配置 ---
+LOG_FILE = "/tmp/a.m.d-helper-tray.log"
+
+# 创建 logger
+logger = logging.getLogger("AMD-HELPER")
+logger.setLevel(logging.DEBUG)
+
+# 文件处理器 - 记录所有级别
+file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+file_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+file_handler.setFormatter(file_formatter)
+
+# 控制台处理器 - 只显示 INFO 及以上
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(message)s')
+console_handler.setFormatter(console_formatter)
+
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
 
 # 确保可以从当前目录导入模块
 sys.path.append(os.path.dirname(__file__))
