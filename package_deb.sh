@@ -296,7 +296,21 @@ SHORTCUT_EOF
         chown "$REAL_USER:$REAL_USER" "$SHORTCUT_SCRIPT"
         chown "$REAL_USER:$REAL_USER" "$USER_HOME/.config/a.m.d-helper"
         
-        # 创建 autostart 条目 - 首次登录时自动设置快捷键
+        # 尝试立即执行快捷键设置（需要用户的 D-Bus 会话）
+        DBUS_ADDR="unix:path=/run/user/$(id -u $REAL_USER)/bus"
+        if [ -S "/run/user/$(id -u $REAL_USER)/bus" ]; then
+            echo "检测到用户 D-Bus 会话，立即设置快捷键..."
+            # 以用户身份运行，设置正确的环境变量
+            if su "$REAL_USER" -c "DBUS_SESSION_BUS_ADDRESS=$DBUS_ADDR $SHORTCUT_SCRIPT" 2>&1 | tee -a "$LOG_FILE"; then
+                echo "✅ F4 快捷键设置成功！"
+            else
+                echo "快捷键设置可能失败，将在下次登录时重试"
+            fi
+        else
+            echo "未检测到用户 D-Bus 会话（可能是 SSH 安装），将在下次登录时自动设置"
+        fi
+        
+        # 创建 autostart 条目作为备用 - 首次登录时自动设置快捷键
         AUTOSTART_DIR="$USER_HOME/.config/autostart"
         mkdir -p "$AUTOSTART_DIR"
         cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
@@ -307,12 +321,11 @@ Exec=$SHORTCUT_SCRIPT
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=5
+X-GNOME-Autostart-Delay=3
 DESKTOP_EOF
         chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
         
-        echo "快捷键设置脚本已创建，将在下次登录时自动运行。"
-        echo "你也可以手动运行: $SHORTCUT_SCRIPT"
+        echo "快捷键设置完成。如需手动设置: $SHORTCUT_SCRIPT"
     fi
 } >> "$LOG_FILE" 2>&1
 
