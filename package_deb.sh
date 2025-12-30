@@ -9,7 +9,7 @@ set -e
 
 # --- Configuration ---
 APP_NAME="a.m.d-helper"
-VERSION="0.56.2"
+VERSION="0.56.3"
 ARCH="amd64"
 MAINTAINER="Your Name <your.email@example.com>"
 DESCRIPTION_SHORT="A screen reader and OCR application."
@@ -133,39 +133,79 @@ echo "Setting up keyboard shortcut..."
         
         cat > "$SHORTCUT_SCRIPT" << 'SHORTCUT_EOF'
 #!/bin/bash
-# F4 快捷键设置脚本
+# F4 快捷键设置脚本 - 修复版
 LOG="/tmp/a.m.d-helper-shortcut.log"
 echo "=== 快捷键设置 $(date) ===" >> "$LOG"
 
 SHORTCUT_NAME="A.M.D-HELPER OCR"
 CMD="/usr/share/a.m.d-helper/run.sh"
 BINDING="F4"
+FOUND_SLOT=""
 
-# 检查是否已存在
-for i in $(seq 0 19); do
-    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
-    NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null)
-    echo "检查 custom$i: $NAME" >> "$LOG"
-    if [[ "$NAME" == "'$SHORTCUT_NAME'" ]]; then
-        echo "快捷键已存在于 custom$i" >> "$LOG"
-        exit 0
-    fi
-done
-
-# 查找空槽位
+# 检查是否已存在，同时验证 binding 是否正确设置
 for i in $(seq 0 19); do
     SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
     NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null || echo "")
-    echo "槽位 custom$i 名称: '$NAME'" >> "$LOG"
+    CURRENT_BINDING=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding 2>/dev/null || echo "")
+    CURRENT_CMD=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command 2>/dev/null || echo "")
+    echo "检查 custom$i: name=$NAME, binding=$CURRENT_BINDING, command=$CURRENT_CMD" >> "$LOG"
+    
+    if [[ "$NAME" == "'$SHORTCUT_NAME'" ]]; then
+        FOUND_SLOT="$i"
+        # 检查 binding 和 command 是否正确
+        if [[ "$CURRENT_BINDING" == "'$BINDING'" && "$CURRENT_CMD" == "'$CMD'" ]]; then
+            # 还需要检查是否在 custom-keybindings 列表中
+            KEYBINDINGS=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
+            echo "当前快捷键列表: $KEYBINDINGS" >> "$LOG"
+            if [[ "$KEYBINDINGS" == *"$SLOT"* ]]; then
+                echo "快捷键已正确配置于 custom$i" >> "$LOG"
+                exit 0
+            else
+                echo "快捷键存在但未在列表中，需要添加" >> "$LOG"
+            fi
+        else
+            echo "快捷键存在但配置不完整，需要修复" >> "$LOG"
+        fi
+        break
+    fi
+done
+
+# 如果找到了但配置不完整，修复它
+if [[ -n "$FOUND_SLOT" ]]; then
+    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$FOUND_SLOT/"
+    echo "修复槽位 custom$FOUND_SLOT" >> "$LOG"
+    
+    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME" 2>> "$LOG"
+    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD" 2>> "$LOG"
+    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING" 2>> "$LOG"
+    
+    # 确保在列表中
+    CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
+    if [[ "$CURRENT" != *"$SLOT"* ]]; then
+        if [[ "$CURRENT" == "@as []" ]]; then
+            NEW="['$SLOT']"
+        else
+            NEW=$(echo "$CURRENT" | sed "s/]$/, '$SLOT']/")
+        fi
+        echo "更新快捷键列表: $NEW" >> "$LOG"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW" 2>> "$LOG"
+    fi
+    
+    echo "F4 快捷键修复成功 (slot: custom$FOUND_SLOT)" >> "$LOG"
+    exit 0
+fi
+
+# 查找空槽位创建新快捷键
+for i in $(seq 0 19); do
+    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+    NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null || echo "")
     if [[ -z "$NAME" || "$NAME" == "''" ]]; then
-        echo "使用槽位 custom$i" >> "$LOG"
+        echo "使用空槽位 custom$i" >> "$LOG"
         
-        # 设置快捷键
         gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME" 2>> "$LOG"
         gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD" 2>> "$LOG"
         gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING" 2>> "$LOG"
         
-        # 添加到列表
         CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
         echo "当前快捷键列表: $CURRENT" >> "$LOG"
         if [[ "$CURRENT" == "@as []" ]]; then
