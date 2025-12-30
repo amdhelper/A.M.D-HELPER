@@ -112,6 +112,60 @@ if ! "$VENV_DIR/bin/pip" install "$APP_DIR/libshot" 2>&1 | tee -a "$LOG_FILE"; t
 fi
 echo "Dependency installation complete."
 
+# --- 1.5 Download Piper TTS models ---
+echo "Downloading Piper TTS models..."
+MODELS_DIR="$APP_DIR/models"
+mkdir -p "$MODELS_DIR"
+
+# 中文模型
+ZH_MODEL="zh_CN-huayan-medium.onnx"
+ZH_MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx"
+ZH_JSON_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json"
+
+# 英文模型
+EN_MODEL="en_US-kristin-medium.onnx"
+EN_MODEL_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/kristin/medium/en_US-kristin-medium.onnx"
+EN_JSON_URL="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/kristin/medium/en_US-kristin-medium.onnx.json"
+
+download_model() {
+    local name="$1"
+    local model_url="$2"
+    local json_url="$3"
+    local dest="$MODELS_DIR/$name"
+    
+    if [ -f "$dest" ] && [ -s "$dest" ]; then
+        echo "模型已存在: $name" | tee -a "$LOG_FILE"
+        return 0
+    fi
+    
+    echo "下载模型: $name ..." | tee -a "$LOG_FILE"
+    
+    # 尝试使用 wget 或 curl
+    if command -v wget &> /dev/null; then
+        wget -q --show-progress -O "$dest" "$model_url" 2>&1 | tee -a "$LOG_FILE" || true
+        wget -q -O "${dest}.json" "$json_url" 2>&1 | tee -a "$LOG_FILE" || true
+    elif command -v curl &> /dev/null; then
+        curl -L -o "$dest" "$model_url" 2>&1 | tee -a "$LOG_FILE" || true
+        curl -L -o "${dest}.json" "$json_url" 2>&1 | tee -a "$LOG_FILE" || true
+    else
+        echo "警告: 未找到 wget 或 curl，无法下载模型" | tee -a "$LOG_FILE"
+        return 1
+    fi
+    
+    if [ -f "$dest" ] && [ -s "$dest" ]; then
+        echo "模型下载成功: $name" | tee -a "$LOG_FILE"
+        return 0
+    else
+        echo "警告: 模型下载失败: $name (Piper TTS 将不可用，但 Edge-TTS 仍可使用)" | tee -a "$LOG_FILE"
+        return 1
+    fi
+}
+
+download_model "$ZH_MODEL" "$ZH_MODEL_URL" "$ZH_JSON_URL"
+download_model "$EN_MODEL" "$EN_MODEL_URL" "$EN_JSON_URL"
+
+echo "Piper 模型检查完成。"
+
 # --- 2. Set file permissions ---
 echo "Setting file permissions..."
 {
@@ -133,7 +187,7 @@ echo "Setting up keyboard shortcut..."
         
         cat > "$SHORTCUT_SCRIPT" << 'SHORTCUT_EOF'
 #!/bin/bash
-# F4 快捷键设置脚本 - 修复版
+# F4 快捷键设置脚本 - 修复版 v2
 LOG="/tmp/a.m.d-helper-shortcut.log"
 echo "=== 快捷键设置 $(date) ===" >> "$LOG"
 
@@ -170,6 +224,33 @@ for i in $(seq 0 19); do
     fi
 done
 
+# 添加槽位到列表的函数 (避免 sed 斜杠问题)
+add_slot_to_list() {
+    local SLOT="$1"
+    local CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
+    echo "当前快捷键列表: $CURRENT" >> "$LOG"
+    
+    if [[ "$CURRENT" == "@as []" ]]; then
+        NEW="['$SLOT']"
+    else
+        # 使用 Python 来安全处理列表操作，避免 sed 斜杠问题
+        NEW=$(python3 -c "
+import ast
+current = ast.literal_eval('$CURRENT')
+slot = '$SLOT'
+if slot not in current:
+    current.append(slot)
+print(current)
+" 2>/dev/null)
+        if [[ -z "$NEW" ]]; then
+            # Python 失败时的备用方案：直接去掉最后的 ] 并追加
+            NEW="${CURRENT%]}, '$SLOT']"
+        fi
+    fi
+    echo "新快捷键列表: $NEW" >> "$LOG"
+    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW" 2>> "$LOG"
+}
+
 # 如果找到了但配置不完整，修复它
 if [[ -n "$FOUND_SLOT" ]]; then
     SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$FOUND_SLOT/"
@@ -182,13 +263,7 @@ if [[ -n "$FOUND_SLOT" ]]; then
     # 确保在列表中
     CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
     if [[ "$CURRENT" != *"$SLOT"* ]]; then
-        if [[ "$CURRENT" == "@as []" ]]; then
-            NEW="['$SLOT']"
-        else
-            NEW=$(echo "$CURRENT" | sed "s/]$/, '$SLOT']/")
-        fi
-        echo "更新快捷键列表: $NEW" >> "$LOG"
-        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW" 2>> "$LOG"
+        add_slot_to_list "$SLOT"
     fi
     
     echo "F4 快捷键修复成功 (slot: custom$FOUND_SLOT)" >> "$LOG"
@@ -206,15 +281,7 @@ for i in $(seq 0 19); do
         gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD" 2>> "$LOG"
         gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING" 2>> "$LOG"
         
-        CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-        echo "当前快捷键列表: $CURRENT" >> "$LOG"
-        if [[ "$CURRENT" == "@as []" ]]; then
-            NEW="['$SLOT']"
-        else
-            NEW=$(echo "$CURRENT" | sed "s/]$/, '$SLOT']/")
-        fi
-        echo "新快捷键列表: $NEW" >> "$LOG"
-        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW" 2>> "$LOG"
+        add_slot_to_list "$SLOT"
         
         echo "F4 快捷键设置成功 (slot: custom$i)" >> "$LOG"
         exit 0
