@@ -26,66 +26,35 @@ class TtsEngine:
         raise NotImplementedError
 
 class EdgeTtsEngine(TtsEngine):
-    """使用 edge-tts 命令行工具合成语音"""
+    """使用 edge-tts Python API 合成语音"""
     async def synthesize(self, text: str, output_path: str, lang: str = 'auto'):
         logger.info("🔄 使用 Edge-TTS 进行语音合成...")
         voice = "zh-CN-XiaoxiaoNeural" if lang == 'zh' else "en-US-JennyNeural"
         logger.debug(f"Edge-TTS 参数: voice={voice}, lang={lang}, output={output_path}")
         logger.debug(f"合成文本: {text[:100]}...")
         
-        # --- 自动查找 edge-tts 可执行文件 ---
-        edge_tts_executable = shutil.which('edge-tts')
-        logger.debug(f"shutil.which('edge-tts') 结果: {edge_tts_executable}")
-        
-        if not edge_tts_executable:
-            # 兼容 venv 环境：在当前 Python 解释器所在目录查找
-            py_dir = os.path.dirname(sys.executable)
-            maybe_path = os.path.join(py_dir, 'edge-tts')
-            logger.debug(f"尝试 venv 路径: {maybe_path}, 存在: {os.path.exists(maybe_path)}")
-            if os.path.exists(maybe_path):
-                edge_tts_executable = maybe_path
-        
-        if not edge_tts_executable:
-            logger.error("找不到 'edge-tts' 可执行文件")
-            logger.debug(f"当前 PATH: {os.environ.get('PATH', 'N/A')}")
-            logger.debug(f"Python 可执行文件: {sys.executable}")
-            raise FileNotFoundError("找不到 'edge-tts' 可执行文件。请确保 'edge-tts' 已通过 pip 安装。")
-        
-        logger.debug(f"使用 edge-tts 路径: {edge_tts_executable}")
-        
-        command = [
-            edge_tts_executable,
-            "--voice", voice,
-            "--text", text,
-            "--write-media", output_path
-        ]
-        logger.debug(f"执行命令: {' '.join(command)}")
-        
         try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
+            import edge_tts
+            logger.debug(f"edge_tts 模块版本: {getattr(edge_tts, '__version__', 'unknown')}")
             
-            logger.debug(f"Edge-TTS 返回码: {process.returncode}")
-            if stdout:
-                logger.debug(f"Edge-TTS stdout: {stdout.decode()}")
-            if stderr:
-                logger.debug(f"Edge-TTS stderr: {stderr.decode()}")
-
-            if process.returncode != 0:
-                logger.error(f"Edge-TTS 错误 (返回码 {process.returncode}): {stderr.decode()}")
-                raise RuntimeError(f"Edge-TTS synthesis failed: {stderr.decode()}")
-            else:
-                # 验证输出文件
-                if os.path.exists(output_path):
-                    file_size = os.path.getsize(output_path)
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(output_path)
+            
+            # 验证输出文件
+            if os.path.exists(output_path):
+                file_size = os.path.getsize(output_path)
+                if file_size > 0:
                     logger.info(f"✅ 语音已保存到: {output_path} (大小: {file_size} bytes)")
                 else:
-                    logger.error(f"Edge-TTS 声称成功但输出文件不存在: {output_path}")
-                    raise RuntimeError("Edge-TTS output file not created")
+                    logger.error(f"Edge-TTS 生成的文件为空: {output_path}")
+                    raise RuntimeError("Edge-TTS generated empty file")
+            else:
+                logger.error(f"Edge-TTS 输出文件不存在: {output_path}")
+                raise RuntimeError("Edge-TTS output file not created")
+                
+        except ImportError as e:
+            logger.error(f"无法导入 edge_tts 模块: {e}")
+            raise RuntimeError("edge-tts 库未安装，请运行: pip install edge-tts")
         except Exception as e:
             logger.error(f"Edge-TTS 执行异常: {e}")
             logger.error(f"异常详情:\n{traceback.format_exc()}")

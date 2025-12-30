@@ -388,93 +388,103 @@ def send_report_via_worker(description, log_content):
 
 def show_report_issue_window():
     """显示用于上报问题的Tkinter窗口，并应用深色主题。"""
+    logger.debug("show_report_issue_window 被调用")
     try:
         import tkinter as tk
         from tkinter import ttk, scrolledtext, messagebox
-    except ImportError:
-        print("错误: 上报问题功能需要 tkinter。" )
+        logger.debug("tkinter 导入成功")
+    except ImportError as e:
+        logger.error(f"错误: 上报问题功能需要 tkinter: {e}")
         return
 
-    log_file = "/tmp/a.m.d-helper-tray.log"
-    log_content = "Log file not found."
     try:
-        with open(log_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            log_content = "".join(lines[-100:])
-    except FileNotFoundError:
-        print(f"日志文件 '{log_file}' 未找到。" )
+        log_file = "/tmp/a.m.d-helper-tray.log"
+        log_content = "Log file not found."
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                log_content = "".join(lines[-100:])
+            logger.debug(f"读取日志文件成功，共 {len(lines)} 行")
+        except FileNotFoundError:
+            logger.warning(f"日志文件 '{log_file}' 未找到。")
 
-    win = tk.Tk()
-    win.title(_("report_issue_window_title"))
-    win.configure(bg='#2b2b2b')
+        win = tk.Tk()
+        win.title(_("report_issue_window_title"))
+        win.configure(bg='#2b2b2b')
+        logger.debug("Tk 窗口创建成功")
 
-    style = ttk.Style(win)
-    style.theme_use('clam')
-    
-    # --- 统一深色主题配置 ---
-    bg_color = '#2b2b2b'
-    fg_color = 'white'
-    insert_bg = 'white' # 光标颜色
-    style.configure('.', background=bg_color, foreground=fg_color)
-    style.configure('TFrame', background=bg_color)
-    style.configure('TLabel', background=bg_color, foreground=fg_color)
-    style.configure('TButton', background='#3c3f41', foreground=fg_color, borderwidth=1, focusthickness=3, focuscolor=fg_color)
-    style.map('TButton', background=[('active', '#4f5254')])
-
-    main_frame = ttk.Frame(win, padding="10", style='TFrame')
-    main_frame.pack(expand=True, fill=tk.BOTH)
-
-    ttk.Label(main_frame, text=_("report_issue_description")).pack(anchor='w', pady=(0, 5))
-    
-    # 使用标准tk.Text并手动设置颜色，因为它比ttk.ScrolledText更容易定制
-    user_text_frame = tk.Frame(main_frame, bd=1, relief=tk.SOLID, bg='#3c3f41')
-    user_text = tk.Text(user_text_frame, height=5, width=60, bg=bg_color, fg=fg_color, insertbackground=insert_bg, relief=tk.FLAT, borderwidth=0)
-    user_text_scroll = ttk.Scrollbar(user_text_frame, command=user_text.yview)
-    user_text['yscrollcommand'] = user_text_scroll.set
-    user_text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-    user_text.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
-    user_text_frame.pack(expand=True, fill=tk.BOTH, pady=5)
-    user_text.focus()
-
-    ttk.Label(main_frame, text=_("report_issue_log_label")).pack(anchor='w', pady=(10, 5))
-    
-    log_display_frame = tk.Frame(main_frame, bd=1, relief=tk.SOLID, bg='#3c3f41')
-    log_display = tk.Text(log_display_frame, height=15, width=60, bg=bg_color, fg=fg_color, insertbackground=insert_bg, relief=tk.FLAT, borderwidth=0)
-    log_display_scroll = ttk.Scrollbar(log_display_frame, command=log_display.yview)
-    log_display['yscrollcommand'] = log_display_scroll.set
-    log_display.insert(tk.INSERT, log_content)
-    log_display.config(state='disabled')
-    log_display_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-    log_display.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
-    log_display_frame.pack(expand=True, fill=tk.BOTH, pady=5)
-
-    def submit_action():
-        description = user_text.get("1.0", tk.END).strip()
-        def do_send():
-            success = send_report_via_worker(description, log_content)
-            win.after(0, lambda: on_send_complete(success))
+        style = ttk.Style(win)
+        style.theme_use('clam')
         
-        threading.Thread(target=do_send, daemon=True).start()
-        submit_button.config(state="disabled", text="Sending...")
+        # --- 统一深色主题配置 ---
+        bg_color = '#2b2b2b'
+        fg_color = 'white'
+        insert_bg = 'white' # 光标颜色
+        style.configure('.', background=bg_color, foreground=fg_color)
+        style.configure('TFrame', background=bg_color)
+        style.configure('TLabel', background=bg_color, foreground=fg_color)
+        style.configure('TButton', background='#3c3f41', foreground=fg_color, borderwidth=1, focusthickness=3, focuscolor=fg_color)
+        style.map('TButton', background=[('active', '#4f5254')])
 
-    def on_send_complete(success):
-        if success:
-            messagebox.showinfo(_("report_issue_success_title"), _("report_issue_success_message"))
-            win.destroy()
-        else:
-            messagebox.showerror(_("report_issue_failure_title"), _("report_issue_failure_message"))
-            submit_button.config(state="normal", text=_("report_issue_submit"))
+        main_frame = ttk.Frame(win, padding="10", style='TFrame')
+        main_frame.pack(expand=True, fill=tk.BOTH)
 
-    button_frame = ttk.Frame(main_frame, style='TFrame')
-    button_frame.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(main_frame, text=_("report_issue_description")).pack(anchor='w', pady=(0, 5))
+        
+        # 使用标准tk.Text并手动设置颜色，因为它比ttk.ScrolledText更容易定制
+        user_text_frame = tk.Frame(main_frame, bd=1, relief=tk.SOLID, bg='#3c3f41')
+        user_text = tk.Text(user_text_frame, height=5, width=60, bg=bg_color, fg=fg_color, insertbackground=insert_bg, relief=tk.FLAT, borderwidth=0)
+        user_text_scroll = ttk.Scrollbar(user_text_frame, command=user_text.yview)
+        user_text['yscrollcommand'] = user_text_scroll.set
+        user_text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        user_text.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        user_text_frame.pack(expand=True, fill=tk.BOTH, pady=5)
+        user_text.focus()
 
-    submit_button = ttk.Button(button_frame, text=_("report_issue_submit"), command=submit_action, style='TButton')
-    submit_button.pack(side=tk.RIGHT, padx=5)
-    
-    cancel_button = ttk.Button(button_frame, text=_("report_issue_cancel"), command=win.destroy, style='TButton')
-    cancel_button.pack(side=tk.RIGHT)
+        ttk.Label(main_frame, text=_("report_issue_log_label")).pack(anchor='w', pady=(10, 5))
+        
+        log_display_frame = tk.Frame(main_frame, bd=1, relief=tk.SOLID, bg='#3c3f41')
+        log_display = tk.Text(log_display_frame, height=15, width=60, bg=bg_color, fg=fg_color, insertbackground=insert_bg, relief=tk.FLAT, borderwidth=0)
+        log_display_scroll = ttk.Scrollbar(log_display_frame, command=log_display.yview)
+        log_display['yscrollcommand'] = log_display_scroll.set
+        log_display.insert(tk.INSERT, log_content)
+        log_display.config(state='disabled')
+        log_display_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        log_display.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        log_display_frame.pack(expand=True, fill=tk.BOTH, pady=5)
 
-    win.mainloop()
+        def submit_action():
+            description = user_text.get("1.0", tk.END).strip()
+            def do_send():
+                success = send_report_via_worker(description, log_content)
+                win.after(0, lambda: on_send_complete(success))
+            
+            threading.Thread(target=do_send, daemon=True).start()
+            submit_button.config(state="disabled", text="Sending...")
+
+        def on_send_complete(success):
+            if success:
+                messagebox.showinfo(_("report_issue_success_title"), _("report_issue_success_message"))
+                win.destroy()
+            else:
+                messagebox.showerror(_("report_issue_failure_title"), _("report_issue_failure_message"))
+                submit_button.config(state="normal", text=_("report_issue_submit"))
+
+        button_frame = ttk.Frame(main_frame, style='TFrame')
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        submit_button = ttk.Button(button_frame, text=_("report_issue_submit"), command=submit_action, style='TButton')
+        submit_button.pack(side=tk.RIGHT, padx=5)
+        
+        cancel_button = ttk.Button(button_frame, text=_("report_issue_cancel"), command=win.destroy, style='TButton')
+        cancel_button.pack(side=tk.RIGHT)
+
+        logger.debug("上报问题窗口准备显示，进入 mainloop")
+        win.mainloop()
+        logger.debug("上报问题窗口已关闭")
+    except Exception as e:
+        logger.error(f"show_report_issue_window 发生异常: {e}")
+        logger.error(f"异常详情:\n{traceback.format_exc()}")
 
 
 

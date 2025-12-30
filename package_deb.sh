@@ -10,7 +10,7 @@ set -e
 
 # --- Configuration ---
 APP_NAME="a.m.d-helper"
-VERSION="0.53.0"
+VERSION="0.54.0"
 ARCH="amd64"
 MAINTAINER="Your Name <your.email@example.com>"
 DESCRIPTION_SHORT="A screen reader and OCR application."
@@ -140,50 +140,129 @@ echo "Setting up keyboard shortcut..."
     if command -v gsettings &> /dev/null && [ -n "$USER_HOME" ]; then
         echo "Attempting to set F4 keyboard shortcut for GNOME..."
 
-        DBUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-        if [ -z "$XDG_RUNTIME_DIR" ]; then
-            XDG_RUNTIME_DIR="/run/user/$(id -u $REAL_USER)"
-            DBUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+        # 获取用户的 UID
+        USER_ID=$(id -u "$REAL_USER" 2>/dev/null)
+        if [ -z "$USER_ID" ]; then
+            echo "WARNING: Could not get UID for user $REAL_USER"
+            USER_ID=$(id -u)
         fi
-
-        run_gsettings() { sudo -u "$REAL_USER" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDRESS" timeout 5 gsettings "$@"; }
-
-        SHORTCUT_APP_NAME="A.M.D-HELPER OCR"
-        CMD_TO_RUN="/usr/share/a.m.d-helper/run.sh"
-        BINDING="F4"
         
-        TARGET_SLOT=""
-        # Loop through a reasonable number of custom keybinding slots
-        for i in {0..19}; do
-            SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
-            # A slot is available if getting its name fails (returns 'free') or if the name is empty ('') or already set to our app's name.
-            EXISTING_NAME=$(run_gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
+        # 设置 XDG_RUNTIME_DIR
+        XDG_RUNTIME_DIR="/run/user/$USER_ID"
+        
+        # 检查 D-Bus socket 是否存在
+        if [ ! -S "$XDG_RUNTIME_DIR/bus" ]; then
+            echo "WARNING: D-Bus session bus socket not found at $XDG_RUNTIME_DIR/bus"
+            echo "The user may need to log in first. Shortcut will be set on first login."
             
-            if [[ "$EXISTING_NAME" == "free" || "$EXISTING_NAME" == "''" || "$EXISTING_NAME" == "'$SHORTCUT_APP_NAME'" ]]; then
-                TARGET_SLOT="custom$i"
-                break
-            fi
-        done
+            # 创建一个首次登录时运行的脚本
+            FIRST_RUN_SCRIPT="$USER_HOME/.config/a.m.d-helper/setup-shortcut.sh"
+            mkdir -p "$USER_HOME/.config/a.m.d-helper"
+            cat > "$FIRST_RUN_SCRIPT" << 'SHORTCUT_SCRIPT'
+#!/bin/bash
+# This script sets up the F4 keyboard shortcut on first login
+SHORTCUT_APP_NAME="A.M.D-HELPER OCR"
+CMD_TO_RUN="/usr/share/a.m.d-helper/run.sh"
+BINDING="F4"
 
-        if [ -n "$TARGET_SLOT" ]; then
-            echo "Using available keybinding slot: $TARGET_SLOT"
-            KEYBINDING_PATH="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
-            SLOT_URI="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
+# Check if shortcut already exists
+for i in {0..19}; do
+    SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+    EXISTING_NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
+    if [[ "$EXISTING_NAME" == "'$SHORTCUT_APP_NAME'" ]]; then
+        echo "Shortcut already exists in slot custom$i"
+        rm -f "$0"
+        exit 0
+    fi
+done
 
-            run_gsettings set "$KEYBINDING_PATH" name "$SHORTCUT_APP_NAME"
-            run_gsettings set "$KEYBINDING_PATH" command "$CMD_TO_RUN"
-            run_gsettings set "$KEYBINDING_PATH" binding "$BINDING"
+# Find available slot
+TARGET_SLOT=""
+for i in {0..19}; do
+    SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+    EXISTING_NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
+    if [[ "$EXISTING_NAME" == "free" || "$EXISTING_NAME" == "''" ]]; then
+        TARGET_SLOT="custom$i"
+        break
+    fi
+done
 
-            # Add the new slot to the list of custom keybindings if it's not already there
-            CURRENT_BINDINGS_STR=$(run_gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | sed "s/@as //" )
-            if [[ ! "$CURRENT_BINDINGS_STR" =~ "$SLOT_URI" ]]; then
-                # Safely append the new URI to the list
-                NEW_BINDINGS_STR=$(python3 -c "import sys, ast; l=ast.literal_eval(sys.argv[1]); l.append(sys.argv[2]); print(l)" "$CURRENT_BINDINGS_STR" "$SLOT_URI")
-                run_gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW_BINDINGS_STR"
-            fi
-            echo "GNOME shortcut setup completed for slot $TARGET_SLOT."
+if [ -n "$TARGET_SLOT" ]; then
+    KEYBINDING_PATH="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
+    SLOT_URI="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
+
+    gsettings set "$KEYBINDING_PATH" name "$SHORTCUT_APP_NAME"
+    gsettings set "$KEYBINDING_PATH" command "$CMD_TO_RUN"
+    gsettings set "$KEYBINDING_PATH" binding "$BINDING"
+
+    CURRENT_BINDINGS_STR=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | sed "s/@as //")
+    if [[ ! "$CURRENT_BINDINGS_STR" =~ "$SLOT_URI" ]]; then
+        NEW_BINDINGS_STR=$(python3 -c "import sys, ast; l=ast.literal_eval(sys.argv[1]); l.append(sys.argv[2]); print(l)" "$CURRENT_BINDINGS_STR" "$SLOT_URI")
+        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW_BINDINGS_STR"
+    fi
+    echo "F4 shortcut setup completed."
+fi
+
+# Remove this script after successful execution
+rm -f "$0"
+SHORTCUT_SCRIPT
+            chmod +x "$FIRST_RUN_SCRIPT"
+            chown "$REAL_USER:$REAL_USER" "$FIRST_RUN_SCRIPT"
+            chown "$REAL_USER:$REAL_USER" "$USER_HOME/.config/a.m.d-helper"
+            
+            # 添加到用户的 autostart 中（一次性运行）
+            AUTOSTART_DIR="$USER_HOME/.config/autostart"
+            mkdir -p "$AUTOSTART_DIR"
+            cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
+[Desktop Entry]
+Type=Application
+Name=A.M.D-HELPER Shortcut Setup
+Exec=$FIRST_RUN_SCRIPT
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+DESKTOP_EOF
+            chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
+            echo "Created first-login shortcut setup script."
         else
-            echo "WARNING: Could not find an available custom keybinding slot after checking custom0 through custom19. Shortcut not set."
+            # D-Bus socket 存在，直接设置快捷键
+            DBUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+            run_gsettings() { sudo -u "$REAL_USER" DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDRESS" XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" timeout 5 gsettings "$@"; }
+
+            SHORTCUT_APP_NAME="A.M.D-HELPER OCR"
+            CMD_TO_RUN="/usr/share/a.m.d-helper/run.sh"
+            BINDING="F4"
+            
+            TARGET_SLOT=""
+            for i in {0..19}; do
+                SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+                EXISTING_NAME=$(run_gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
+                
+                if [[ "$EXISTING_NAME" == "free" || "$EXISTING_NAME" == "''" || "$EXISTING_NAME" == "'$SHORTCUT_APP_NAME'" ]]; then
+                    TARGET_SLOT="custom$i"
+                    break
+                fi
+            done
+
+            if [ -n "$TARGET_SLOT" ]; then
+                echo "Using available keybinding slot: $TARGET_SLOT"
+                KEYBINDING_PATH="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
+                SLOT_URI="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
+
+                run_gsettings set "$KEYBINDING_PATH" name "$SHORTCUT_APP_NAME"
+                run_gsettings set "$KEYBINDING_PATH" command "$CMD_TO_RUN"
+                run_gsettings set "$KEYBINDING_PATH" binding "$BINDING"
+
+                CURRENT_BINDINGS_STR=$(run_gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | sed "s/@as //" )
+                if [[ ! "$CURRENT_BINDINGS_STR" =~ "$SLOT_URI" ]]; then
+                    NEW_BINDINGS_STR=$(python3 -c "import sys, ast; l=ast.literal_eval(sys.argv[1]); l.append(sys.argv[2]); print(l)" "$CURRENT_BINDINGS_STR" "$SLOT_URI")
+                    run_gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW_BINDINGS_STR"
+                fi
+                echo "GNOME shortcut setup completed for slot $TARGET_SLOT."
+            else
+                echo "WARNING: Could not find an available custom keybinding slot after checking custom0 through custom19. Shortcut not set."
+            fi
         fi
     else
         echo "WARNING: 'gsettings' command not found or not running in a user session. Could not set F4 keyboard shortcut."
