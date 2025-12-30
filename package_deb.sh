@@ -134,6 +134,8 @@ echo "Setting up keyboard shortcut..."
         cat > "$SHORTCUT_SCRIPT" << 'SHORTCUT_EOF'
 #!/bin/bash
 # F4 快捷键设置脚本
+LOG="/tmp/a.m.d-helper-shortcut.log"
+echo "=== 快捷键设置 $(date) ===" >> "$LOG"
 
 SHORTCUT_NAME="A.M.D-HELPER OCR"
 CMD="/usr/share/a.m.d-helper/run.sh"
@@ -143,8 +145,9 @@ BINDING="F4"
 for i in $(seq 0 19); do
     SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
     NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null)
+    echo "检查 custom$i: $NAME" >> "$LOG"
     if [[ "$NAME" == "'$SHORTCUT_NAME'" ]]; then
-        echo "快捷键已存在"
+        echo "快捷键已存在于 custom$i" >> "$LOG"
         exit 0
     fi
 done
@@ -153,27 +156,32 @@ done
 for i in $(seq 0 19); do
     SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
     NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null || echo "")
+    echo "槽位 custom$i 名称: '$NAME'" >> "$LOG"
     if [[ -z "$NAME" || "$NAME" == "''" ]]; then
+        echo "使用槽位 custom$i" >> "$LOG"
+        
         # 设置快捷键
-        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME"
-        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD"
-        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME" 2>> "$LOG"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD" 2>> "$LOG"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING" 2>> "$LOG"
         
         # 添加到列表
         CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
+        echo "当前快捷键列表: $CURRENT" >> "$LOG"
         if [[ "$CURRENT" == "@as []" ]]; then
             NEW="['$SLOT']"
         else
             NEW=$(echo "$CURRENT" | sed "s/]$/, '$SLOT']/")
         fi
-        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW"
+        echo "新快捷键列表: $NEW" >> "$LOG"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW" 2>> "$LOG"
         
-        echo "F4 快捷键设置成功 (slot: custom$i)"
+        echo "F4 快捷键设置成功 (slot: custom$i)" >> "$LOG"
         exit 0
     fi
 done
 
-echo "没有可用的快捷键槽位"
+echo "没有可用的快捷键槽位" >> "$LOG"
 exit 1
 SHORTCUT_EOF
 
@@ -181,16 +189,10 @@ SHORTCUT_EOF
         chown "$REAL_USER:$REAL_USER" "$SHORTCUT_SCRIPT"
         chown "$REAL_USER:$REAL_USER" "$USER_HOME/.config/a.m.d-helper"
         
-        # 立即以用户身份运行设置脚本
-        if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
-            echo "检测到图形环境，立即设置快捷键..."
-            su - "$REAL_USER" -c "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u $REAL_USER)/bus $SHORTCUT_SCRIPT" 2>&1 || true
-        else
-            echo "未检测到图形环境，创建首次登录设置..."
-            # 创建 autostart 条目用于首次登录时设置
-            AUTOSTART_DIR="$USER_HOME/.config/autostart"
-            mkdir -p "$AUTOSTART_DIR"
-            cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
+        # 创建 autostart 条目 - 首次登录时自动设置快捷键
+        AUTOSTART_DIR="$USER_HOME/.config/autostart"
+        mkdir -p "$AUTOSTART_DIR"
+        cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
 [Desktop Entry]
 Type=Application
 Name=A.M.D-HELPER Shortcut Setup
@@ -198,12 +200,12 @@ Exec=$SHORTCUT_SCRIPT
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=3
+X-GNOME-Autostart-Delay=5
 DESKTOP_EOF
-            chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
-        fi
+        chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
         
-        echo "快捷键设置完成。"
+        echo "快捷键设置脚本已创建，将在下次登录时自动运行。"
+        echo "你也可以手动运行: $SHORTCUT_SCRIPT"
     fi
 } >> "$LOG_FILE" 2>&1
 

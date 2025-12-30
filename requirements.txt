@@ -1,7 +1,7 @@
 # Core OCR and TTS
 easyocr
 piper-tts
-edge-tts
+edge-tts==6.1.12
 
 # System Tray and D-Bus
 pystray

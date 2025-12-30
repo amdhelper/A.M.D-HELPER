@@ -26,7 +26,7 @@ class TtsEngine:
         raise NotImplementedError
 
 class EdgeTtsEngine(TtsEngine):
-    """使用 edge-tts 命令行工具合成语音（更稳定）"""
+    """使用 edge-tts 命令行工具合成语音"""
     
     MAX_RETRIES = 3
     
@@ -42,52 +42,11 @@ class EdgeTtsEngine(TtsEngine):
             try:
                 logger.debug(f"尝试 {attempt}/{self.MAX_RETRIES}...")
                 
-                # 使用命令行方式调用 edge-tts，避免 Python API 的 asyncio 问题
-                # 查找 edge-tts 可执行文件
-                edge_tts_cmd = shutil.which('edge-tts')
-                if not edge_tts_cmd:
-                    # 尝试在 venv 中查找
-                    py_dir = os.path.dirname(sys.executable)
-                    maybe_path = os.path.join(py_dir, 'edge-tts')
-                    if os.path.exists(maybe_path):
-                        edge_tts_cmd = maybe_path
+                # 使用 Python API 直接调用
+                import edge_tts
                 
-                if not edge_tts_cmd:
-                    logger.error("找不到 edge-tts 命令行工具")
-                    raise RuntimeError("edge-tts 命令行工具未找到")
-                
-                logger.debug(f"使用 edge-tts 命令: {edge_tts_cmd}")
-                
-                # 构建命令
-                command = [
-                    edge_tts_cmd,
-                    '--voice', voice,
-                    '--text', text,
-                    '--write-media', output_path
-                ]
-                
-                logger.debug(f"执行命令: {' '.join(command)}")
-                
-                process = await asyncio.create_subprocess_exec(
-                    *command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=60  # 60秒超时
-                )
-                
-                logger.debug(f"edge-tts 返回码: {process.returncode}")
-                if stdout:
-                    logger.debug(f"stdout: {stdout.decode()}")
-                if stderr:
-                    logger.debug(f"stderr: {stderr.decode()}")
-                
-                if process.returncode != 0:
-                    error_msg = stderr.decode() if stderr else "Unknown error"
-                    raise RuntimeError(f"edge-tts 命令失败: {error_msg}")
+                communicate = edge_tts.Communicate(text, voice)
+                await communicate.save(output_path)
                 
                 # 验证输出文件
                 if os.path.exists(output_path):
@@ -100,9 +59,6 @@ class EdgeTtsEngine(TtsEngine):
                 else:
                     raise RuntimeError("Edge-TTS 输出文件不存在")
                     
-            except asyncio.TimeoutError:
-                last_error = "命令执行超时"
-                logger.warning(f"Edge-TTS 尝试 {attempt} 超时")
             except Exception as e:
                 last_error = e
                 error_msg = str(e)
