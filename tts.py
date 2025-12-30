@@ -26,10 +26,9 @@ class TtsEngine:
         raise NotImplementedError
 
 class EdgeTtsEngine(TtsEngine):
-    """使用 edge-tts Python API 合成语音，带重试机制"""
+    """使用 edge-tts 命令行工具合成语音（更稳定）"""
     
     MAX_RETRIES = 3
-    RETRY_DELAY = 1.0
     
     async def synthesize(self, text: str, output_path: str, lang: str = 'auto'):
         logger.info("🔄 使用 Edge-TTS 进行语音合成...")
@@ -41,16 +40,54 @@ class EdgeTtsEngine(TtsEngine):
         
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
-                import edge_tts
-                import aiohttp
                 logger.debug(f"尝试 {attempt}/{self.MAX_RETRIES}...")
                 
-                # 创建带超时的 connector
-                timeout = aiohttp.ClientTimeout(total=30, connect=10)
-                connector = aiohttp.TCPConnector(limit=1, force_close=True)
+                # 使用命令行方式调用 edge-tts，避免 Python API 的 asyncio 问题
+                # 查找 edge-tts 可执行文件
+                edge_tts_cmd = shutil.which('edge-tts')
+                if not edge_tts_cmd:
+                    # 尝试在 venv 中查找
+                    py_dir = os.path.dirname(sys.executable)
+                    maybe_path = os.path.join(py_dir, 'edge-tts')
+                    if os.path.exists(maybe_path):
+                        edge_tts_cmd = maybe_path
                 
-                communicate = edge_tts.Communicate(text, voice)
-                await communicate.save(output_path)
+                if not edge_tts_cmd:
+                    logger.error("找不到 edge-tts 命令行工具")
+                    raise RuntimeError("edge-tts 命令行工具未找到")
+                
+                logger.debug(f"使用 edge-tts 命令: {edge_tts_cmd}")
+                
+                # 构建命令
+                command = [
+                    edge_tts_cmd,
+                    '--voice', voice,
+                    '--text', text,
+                    '--write-media', output_path
+                ]
+                
+                logger.debug(f"执行命令: {' '.join(command)}")
+                
+                process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=60  # 60秒超时
+                )
+                
+                logger.debug(f"edge-tts 返回码: {process.returncode}")
+                if stdout:
+                    logger.debug(f"stdout: {stdout.decode()}")
+                if stderr:
+                    logger.debug(f"stderr: {stderr.decode()}")
+                
+                if process.returncode != 0:
+                    error_msg = stderr.decode() if stderr else "Unknown error"
+                    raise RuntimeError(f"edge-tts 命令失败: {error_msg}")
                 
                 # 验证输出文件
                 if os.path.exists(output_path):
@@ -63,20 +100,18 @@ class EdgeTtsEngine(TtsEngine):
                 else:
                     raise RuntimeError("Edge-TTS 输出文件不存在")
                     
-            except ImportError as e:
-                logger.error(f"无法导入 edge_tts 模块: {e}")
-                raise RuntimeError("edge-tts 库未安装")
+            except asyncio.TimeoutError:
+                last_error = "命令执行超时"
+                logger.warning(f"Edge-TTS 尝试 {attempt} 超时")
             except Exception as e:
                 last_error = e
                 error_msg = str(e)
                 logger.warning(f"Edge-TTS 尝试 {attempt} 失败: {error_msg}")
-                
-                if attempt < self.MAX_RETRIES:
-                    import asyncio
-                    logger.debug(f"等待 {self.RETRY_DELAY} 秒后重试...")
-                    await asyncio.sleep(self.RETRY_DELAY)
-                    # 增加重试延迟
-                    self.RETRY_DELAY *= 1.5
+            
+            if attempt < self.MAX_RETRIES:
+                delay = attempt * 2
+                logger.debug(f"等待 {delay} 秒后重试...")
+                await asyncio.sleep(delay)
         
         # 所有重试都失败
         logger.error(f"Edge-TTS 在 {self.MAX_RETRIES} 次尝试后仍然失败")

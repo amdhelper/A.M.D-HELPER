@@ -506,6 +506,16 @@ def show_report_issue_window():
         log_display.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
         log_display_frame.pack(expand=True, fill=tk.BOTH, pady=5)
 
+        def copy_log_action():
+            """复制日志到剪贴板"""
+            try:
+                import pyperclip
+                pyperclip.copy(full_log)
+                copy_button.config(text="✓ 已复制")
+                win.after(2000, lambda: copy_button.config(text="复制日志"))
+            except Exception as e:
+                logger.error(f"复制日志失败: {e}")
+
         def submit_action():
             description = user_text.get("1.0", tk.END).strip()
             def do_send():
@@ -525,6 +535,9 @@ def show_report_issue_window():
 
         button_frame = ttk.Frame(main_frame, style='TFrame')
         button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        copy_button = ttk.Button(button_frame, text="复制日志", command=copy_log_action, style='TButton')
+        copy_button.pack(side=tk.LEFT)
 
         submit_button = ttk.Button(button_frame, text=_("report_issue_submit"), command=submit_action, style='TButton')
         submit_button.pack(side=tk.RIGHT, padx=5)

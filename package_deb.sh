@@ -127,83 +127,83 @@ echo "Setting up keyboard shortcut..."
     if command -v gsettings &> /dev/null && [ -n "$USER_HOME" ]; then
         echo "Setting up F4 keyboard shortcut for GNOME..."
 
-        # 创建快捷键设置脚本（用户登录后运行）
-        FIRST_RUN_SCRIPT="$USER_HOME/.config/a.m.d-helper/setup-shortcut.sh"
+        # 创建快捷键设置脚本
+        SHORTCUT_SCRIPT="$USER_HOME/.config/a.m.d-helper/setup-shortcut.sh"
         mkdir -p "$USER_HOME/.config/a.m.d-helper"
         
-        cat > "$FIRST_RUN_SCRIPT" << 'SHORTCUT_SCRIPT'
+        cat > "$SHORTCUT_SCRIPT" << 'SHORTCUT_EOF'
 #!/bin/bash
-LOG_FILE="/tmp/a.m.d-helper-shortcut-setup.log"
-echo "=== Shortcut setup at $(date) ===" >> "$LOG_FILE"
+# F4 快捷键设置脚本
 
-SHORTCUT_APP_NAME="A.M.D-HELPER OCR"
-CMD_TO_RUN="/usr/share/a.m.d-helper/run.sh"
+SHORTCUT_NAME="A.M.D-HELPER OCR"
+CMD="/usr/share/a.m.d-helper/run.sh"
 BINDING="F4"
 
-# 检查快捷键是否已存在
-for i in {0..19}; do
-    SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
-    EXISTING_NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
-    if [[ "$EXISTING_NAME" == "'$SHORTCUT_APP_NAME'" ]]; then
-        echo "Shortcut already exists in custom$i" >> "$LOG_FILE"
-        rm -f "$HOME/.config/autostart/a.m.d-helper-setup.desktop"
-        rm -f "$0"
+# 检查是否已存在
+for i in $(seq 0 19); do
+    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+    NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null)
+    if [[ "$NAME" == "'$SHORTCUT_NAME'" ]]; then
+        echo "快捷键已存在"
         exit 0
     fi
 done
 
-# 查找可用槽位
-TARGET_SLOT=""
-for i in {0..19}; do
-    SLOT_PATH="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
-    EXISTING_NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT_PATH" name 2>/dev/null || echo "free")
-    if [[ "$EXISTING_NAME" == "free" || "$EXISTING_NAME" == "''" ]]; then
-        TARGET_SLOT="custom$i"
-        break
+# 查找空槽位
+for i in $(seq 0 19); do
+    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
+    NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null || echo "")
+    if [[ -z "$NAME" || "$NAME" == "''" ]]; then
+        # 设置快捷键
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD"
+        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING"
+        
+        # 添加到列表
+        CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
+        if [[ "$CURRENT" == "@as []" ]]; then
+            NEW="['$SLOT']"
+        else
+            NEW=$(echo "$CURRENT" | sed "s/]$/, '$SLOT']/")
+        fi
+        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW"
+        
+        echo "F4 快捷键设置成功 (slot: custom$i)"
+        exit 0
     fi
 done
 
-if [ -n "$TARGET_SLOT" ]; then
-    KEYBINDING_PATH="org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
-    SLOT_URI="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/$TARGET_SLOT/"
+echo "没有可用的快捷键槽位"
+exit 1
+SHORTCUT_EOF
 
-    gsettings set "$KEYBINDING_PATH" name "$SHORTCUT_APP_NAME"
-    gsettings set "$KEYBINDING_PATH" command "$CMD_TO_RUN"
-    gsettings set "$KEYBINDING_PATH" binding "$BINDING"
-
-    CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings | sed "s/@as //")
-    if [[ ! "$CURRENT" =~ "$SLOT_URI" ]]; then
-        NEW=$(python3 -c "import sys,ast;l=ast.literal_eval(sys.argv[1]);l.append(sys.argv[2]);print(l)" "$CURRENT" "$SLOT_URI")
-        gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW"
-    fi
-    echo "F4 shortcut created in $TARGET_SLOT" >> "$LOG_FILE"
-else
-    echo "ERROR: No available slot" >> "$LOG_FILE"
-fi
-
-rm -f "$HOME/.config/autostart/a.m.d-helper-setup.desktop"
-rm -f "$0"
-SHORTCUT_SCRIPT
-
-        chmod +x "$FIRST_RUN_SCRIPT"
-        chown "$REAL_USER:$REAL_USER" "$FIRST_RUN_SCRIPT"
+        chmod +x "$SHORTCUT_SCRIPT"
+        chown "$REAL_USER:$REAL_USER" "$SHORTCUT_SCRIPT"
         chown "$REAL_USER:$REAL_USER" "$USER_HOME/.config/a.m.d-helper"
         
-        # 创建 autostart 条目
-        AUTOSTART_DIR="$USER_HOME/.config/autostart"
-        mkdir -p "$AUTOSTART_DIR"
-        cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
+        # 立即以用户身份运行设置脚本
+        if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+            echo "检测到图形环境，立即设置快捷键..."
+            su - "$REAL_USER" -c "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u $REAL_USER)/bus $SHORTCUT_SCRIPT" 2>&1 || true
+        else
+            echo "未检测到图形环境，创建首次登录设置..."
+            # 创建 autostart 条目用于首次登录时设置
+            AUTOSTART_DIR="$USER_HOME/.config/autostart"
+            mkdir -p "$AUTOSTART_DIR"
+            cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
 [Desktop Entry]
 Type=Application
 Name=A.M.D-HELPER Shortcut Setup
-Exec=$FIRST_RUN_SCRIPT
+Exec=$SHORTCUT_SCRIPT
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=3
 DESKTOP_EOF
-        chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
-        echo "Created shortcut setup autostart entry."
+            chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
+        fi
+        
+        echo "快捷键设置完成。"
     fi
 } >> "$LOG_FILE" 2>&1
 
