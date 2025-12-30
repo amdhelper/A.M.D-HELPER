@@ -9,7 +9,7 @@ set -e
 
 # --- Configuration ---
 APP_NAME="a.m.d-helper"
-VERSION="0.56.4"
+VERSION="0.56.5"
 ARCH="amd64"
 MAINTAINER="Your Name <your.email@example.com>"
 DESCRIPTION_SHORT="A screen reader and OCR application."

@@ -60,7 +60,7 @@ APP_NAME = "A.M.D-HELPER"
 DBUS_SERVICE_NAME = "org.amd_helper.Service"
 DBUS_INTERFACE_NAME = "org.amd_helper.Interface"
 DBUS_OBJECT_PATH = "/org/amd_helper/Main"
-VERSION = "0.56.4"
+VERSION = "0.56.5"
 CONTACT_EMAIL = "postmaster@mail.430022.xyz"
 ABOUT_TEXT = "This tool provides instant OCR and TTS functionality."
 
