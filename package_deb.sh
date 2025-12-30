@@ -9,7 +9,7 @@ set -e
 
 # --- Configuration ---
 APP_NAME="a.m.d-helper"
-VERSION="0.55.0"
+VERSION="0.56.0"
 ARCH="amd64"
 MAINTAINER="Your Name <your.email@example.com>"
 DESCRIPTION_SHORT="A screen reader and OCR application."
@@ -116,10 +116,9 @@ echo "Dependency installation complete."
 echo "Setting file permissions..."
 {
     chown -R root:root "$APP_DIR"
-    chmod +x "$APP_DIR/run.sh"
-    chmod +x "$APP_DIR/run_fast.sh"
-    chmod +x "$APP_DIR/run_hover.sh"
-    chmod +x "$APP_DIR/tray.sh"
+    chmod +x "$APP_DIR/run.sh" 2>/dev/null || true
+    chmod +x "$APP_DIR/run_hover.sh" 2>/dev/null || true
+    chmod +x "$APP_DIR/tray.sh" 2>/dev/null || true
 } >> "$LOG_FILE" 2>&1
 
 # --- 3. Set custom keyboard shortcut for F4 ---

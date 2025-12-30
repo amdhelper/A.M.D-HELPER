@@ -26,39 +26,63 @@ class TtsEngine:
         raise NotImplementedError
 
 class EdgeTtsEngine(TtsEngine):
-    """使用 edge-tts Python API 合成语音"""
+    """使用 edge-tts Python API 合成语音，带重试机制"""
+    
+    MAX_RETRIES = 3
+    RETRY_DELAY = 1.0
+    
     async def synthesize(self, text: str, output_path: str, lang: str = 'auto'):
         logger.info("🔄 使用 Edge-TTS 进行语音合成...")
         voice = "zh-CN-XiaoxiaoNeural" if lang == 'zh' else "en-US-JennyNeural"
         logger.debug(f"Edge-TTS 参数: voice={voice}, lang={lang}, output={output_path}")
         logger.debug(f"合成文本: {text[:100]}...")
         
-        try:
-            import edge_tts
-            logger.debug(f"edge_tts 模块版本: {getattr(edge_tts, '__version__', 'unknown')}")
-            
-            communicate = edge_tts.Communicate(text, voice)
-            await communicate.save(output_path)
-            
-            # 验证输出文件
-            if os.path.exists(output_path):
-                file_size = os.path.getsize(output_path)
-                if file_size > 0:
-                    logger.info(f"✅ 语音已保存到: {output_path} (大小: {file_size} bytes)")
-                else:
-                    logger.error(f"Edge-TTS 生成的文件为空: {output_path}")
-                    raise RuntimeError("Edge-TTS generated empty file")
-            else:
-                logger.error(f"Edge-TTS 输出文件不存在: {output_path}")
-                raise RuntimeError("Edge-TTS output file not created")
+        last_error = None
+        
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                import edge_tts
+                import aiohttp
+                logger.debug(f"尝试 {attempt}/{self.MAX_RETRIES}...")
                 
-        except ImportError as e:
-            logger.error(f"无法导入 edge_tts 模块: {e}")
-            raise RuntimeError("edge-tts 库未安装，请运行: pip install edge-tts")
-        except Exception as e:
-            logger.error(f"Edge-TTS 执行异常: {e}")
-            logger.error(f"异常详情:\n{traceback.format_exc()}")
-            raise
+                # 创建带超时的 connector
+                timeout = aiohttp.ClientTimeout(total=30, connect=10)
+                connector = aiohttp.TCPConnector(limit=1, force_close=True)
+                
+                communicate = edge_tts.Communicate(text, voice)
+                await communicate.save(output_path)
+                
+                # 验证输出文件
+                if os.path.exists(output_path):
+                    file_size = os.path.getsize(output_path)
+                    if file_size > 0:
+                        logger.info(f"✅ 语音已保存到: {output_path} (大小: {file_size} bytes)")
+                        return
+                    else:
+                        raise RuntimeError("Edge-TTS 生成的文件为空")
+                else:
+                    raise RuntimeError("Edge-TTS 输出文件不存在")
+                    
+            except ImportError as e:
+                logger.error(f"无法导入 edge_tts 模块: {e}")
+                raise RuntimeError("edge-tts 库未安装")
+            except Exception as e:
+                last_error = e
+                error_msg = str(e)
+                logger.warning(f"Edge-TTS 尝试 {attempt} 失败: {error_msg}")
+                
+                if attempt < self.MAX_RETRIES:
+                    import asyncio
+                    logger.debug(f"等待 {self.RETRY_DELAY} 秒后重试...")
+                    await asyncio.sleep(self.RETRY_DELAY)
+                    # 增加重试延迟
+                    self.RETRY_DELAY *= 1.5
+        
+        # 所有重试都失败
+        logger.error(f"Edge-TTS 在 {self.MAX_RETRIES} 次尝试后仍然失败")
+        logger.error(f"最后一次错误: {last_error}")
+        logger.error(f"异常详情:\n{traceback.format_exc()}")
+        raise RuntimeError(f"Edge-TTS 合成失败: {last_error}")
 
 import sys
 

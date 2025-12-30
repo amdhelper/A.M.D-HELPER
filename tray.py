@@ -60,7 +60,7 @@ APP_NAME = "A.M.D-HELPER"
 DBUS_SERVICE_NAME = "org.amd_helper.Service"
 DBUS_INTERFACE_NAME = "org.amd_helper.Interface"
 DBUS_OBJECT_PATH = "/org/amd_helper/Main"
-VERSION = "0.52"
+VERSION = "0.56.0"
 CONTACT_EMAIL = "postmaster@mail.430022.xyz"
 ABOUT_TEXT = "This tool provides instant OCR and TTS functionality."
 
@@ -386,6 +386,53 @@ def send_report_via_worker(description, log_content):
         print(f"❌ 发送报告时发生未知错误: {e}")
         return False
 
+def collect_system_info():
+    """收集系统环境信息"""
+    import platform
+    import subprocess
+    
+    info_lines = []
+    info_lines.append("=== 系统环境信息 ===")
+    info_lines.append(f"操作系统: {platform.system()} {platform.release()}")
+    info_lines.append(f"发行版: {platform.platform()}")
+    info_lines.append(f"Python 版本: {platform.python_version()}")
+    info_lines.append(f"Python 路径: {sys.executable}")
+    info_lines.append(f"架构: {platform.machine()}")
+    
+    # 桌面环境
+    desktop = os.environ.get('XDG_CURRENT_DESKTOP', 'Unknown')
+    session_type = os.environ.get('XDG_SESSION_TYPE', 'Unknown')
+    info_lines.append(f"桌面环境: {desktop}")
+    info_lines.append(f"会话类型: {session_type}")
+    
+    # 网络连接测试
+    try:
+        result = subprocess.run(['ping', '-c', '1', '-W', '2', 'speech.platform.bing.com'], 
+                              capture_output=True, timeout=5)
+        network_status = "可达" if result.returncode == 0 else "不可达"
+    except:
+        network_status = "测试失败"
+    info_lines.append(f"Edge-TTS 服务器: {network_status}")
+    
+    # edge-tts 版本
+    try:
+        import edge_tts
+        edge_version = getattr(edge_tts, '__version__', 'unknown')
+        info_lines.append(f"edge-tts 版本: {edge_version}")
+    except:
+        info_lines.append("edge-tts 版本: 未安装")
+    
+    # 配置文件内容
+    try:
+        with open(USER_CONFIG_PATH, 'r') as f:
+            config_content = f.read()
+        info_lines.append(f"配置文件: {config_content}")
+    except:
+        info_lines.append("配置文件: 读取失败")
+    
+    info_lines.append("=" * 30)
+    return "\n".join(info_lines)
+
 def show_report_issue_window():
     """显示用于上报问题的Tkinter窗口，并应用深色主题。"""
     logger.debug("show_report_issue_window 被调用")
@@ -398,6 +445,9 @@ def show_report_issue_window():
         return
 
     try:
+        # 收集系统信息
+        system_info = collect_system_info()
+        
         log_file = "/tmp/a.m.d-helper-tray.log"
         log_content = "Log file not found."
         try:
@@ -407,6 +457,9 @@ def show_report_issue_window():
             logger.debug(f"读取日志文件成功，共 {len(lines)} 行")
         except FileNotFoundError:
             logger.warning(f"日志文件 '{log_file}' 未找到。")
+        
+        # 合并系统信息和日志
+        full_log = system_info + "\n\n=== 应用日志 ===\n" + log_content
 
         win = tk.Tk()
         win.title(_("report_issue_window_title"))
@@ -447,7 +500,7 @@ def show_report_issue_window():
         log_display = tk.Text(log_display_frame, height=15, width=60, bg=bg_color, fg=fg_color, insertbackground=insert_bg, relief=tk.FLAT, borderwidth=0)
         log_display_scroll = ttk.Scrollbar(log_display_frame, command=log_display.yview)
         log_display['yscrollcommand'] = log_display_scroll.set
-        log_display.insert(tk.INSERT, log_content)
+        log_display.insert(tk.INSERT, full_log)
         log_display.config(state='disabled')
         log_display_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         log_display.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
@@ -456,7 +509,7 @@ def show_report_issue_window():
         def submit_action():
             description = user_text.get("1.0", tk.END).strip()
             def do_send():
-                success = send_report_via_worker(description, log_content)
+                success = send_report_via_worker(description, full_log)
                 win.after(0, lambda: on_send_complete(success))
             
             threading.Thread(target=do_send, daemon=True).start()
