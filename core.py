@@ -115,7 +115,13 @@ class OcrAndTtsProcessor:
             # 直接使用 OCR 识别出的语言进行合成
             try:
                 logger.debug(f"调用 TTS synthesize: text={text[:30]}..., path={audio_path}, lang={ocr_lang}")
-                asyncio.run(self.tts_engine.synthesize(text, audio_path, lang=ocr_lang))
+                # 为每次调用创建新的事件循环，确保干净的环境
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self.tts_engine.synthesize(text, audio_path, lang=ocr_lang))
+                finally:
+                    loop.close()
                 logger.debug(f"TTS 合成完成，检查文件是否存在: {os.path.exists(audio_path)}, 大小: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 'N/A'}")
             except Exception as tts_error:
                 logger.error(f"TTS 合成失败: {tts_error}")
