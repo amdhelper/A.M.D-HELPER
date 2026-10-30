@@ -11,6 +11,30 @@ deb包安装好以后,程序会自动设置好"f4"键为默认触发快捷键.�
 ```bash
 sudo dpkg -i a.m.d-helper_0.53.0_amd64.deb && sudo apt-get -f install && /usr/share/a.m.d-helper/run_with_init.sh
 ```
+
+## 🔧 Ubuntu 26.04 / GNOME 50（Wayland）说明
+
+新版系统不允许普通程序直接调 GNOME 的交互式截图。旧版在这种情况下会回退到
+X11 抓屏，而 Wayland 下 XWayland 的根窗口是纯黑的 —— 按 F4 后会看到一个黑屏
+框选层，用户等于盲选，必然识别失败。现在的流程是：
+
+1. 按 **F4** → 用 xdg-desktop-portal 抓一张真实全屏画面（约 0.6 秒）；
+2. 立刻弹出全屏覆盖层，把这张画面原样显示出来，鼠标变成十字准星；
+3. 按住左键拖出要朗读的区域，松开就开始 OCR + 朗读；
+   - **Esc** 或 **右键** = 取消
+   - 直接按 **回车** = 整屏朗读
+4. 朗读过程中再按 F4 会打断当前朗读，重新开始框选。
+
+安装包会自动识别 GNOME / KDE / XFCE，并以桌面用户身份把 F4 自动绑定到
+`/usr/share/a.m.d-helper/run.sh`；安装日志 `/tmp/a.m.d-helper-install.log`
+里有一行 `快捷键校验: BOUND F4 ...` 可以核对。安装时如果没赶上图形会话，
+下次登录会自动补绑定。托盘没在运行时按 F4 会自动把托盘拉起来，不需要手动开。
+
+托盘菜单（Help 子菜单）：
+
+- **复制F4截图命令** → 复制 `/usr/share/a.m.d-helper/run.sh`，可直接粘到系统快捷键里
+- **重新绑定F4快捷键** → 一键重新写入绑定，并语音播报结果
+- **打开系统快捷键设置** → 打开「设置 → 键盘」，再点「查看及自定义快捷键」
 ## ⚙️ 手动安装
 ```bash
 sudo apt-get update

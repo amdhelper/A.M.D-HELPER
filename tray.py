@@ -117,6 +117,7 @@ TRANSLATIONS = {
         "error_pyperclip_message": "No clipboard tool available. Please install 'wl-clipboard' (Wayland) or 'xclip' (X11).",
         "error_open_settings_notification": "Operation Failed",
         "error_open_settings_message": "Could not open system settings automatically. Please open them manually.",
+        "settings_opened_message": "System settings opened. Open Keyboard, then View and Customize Shortcuts.",
         "about_window_title": f"About {APP_NAME}",
         "about_version": f"Version: {VERSION}",
         "about_contact": f"Contact: {CONTACT_EMAIL}",
@@ -161,6 +162,7 @@ TRANSLATIONS = {
         "error_pyperclip_message": "系统没有可用的剪贴板工具，请安装 wl-clipboard（Wayland）或 xclip（X11）。",
         "error_open_settings_notification": "操作失败",
         "error_open_settings_message": "无法自动打开系统设置，请手动操作。",
+        "settings_opened_message": "已打开系统设置。请进入键盘，再点查看及自定义快捷键。",
         "about_window_title": f"关于 {APP_NAME}",
         "about_version": f"版本: {VERSION}",
         "about_contact": f"联系: {CONTACT_EMAIL}",
@@ -205,6 +207,7 @@ TRANSLATIONS = {
         "error_pyperclip_message": "系統沒有可用的剪貼簿工具，請安裝 wl-clipboard（Wayland）或 xclip（X11）。",
         "error_open_settings_notification": "操作失敗",
         "error_open_settings_message": "無法自動打開系統設定，請手動操作。",
+        "settings_opened_message": "已打開系統設定。請進入鍵盤，再點查看及自訂快速鍵。",
         "about_window_title": f"關於 {APP_NAME}",
         "about_version": f"版本: {VERSION}",
         "about_contact": f"聯繫: {CONTACT_EMAIL}",
@@ -840,7 +843,7 @@ class AppTray:
     def _open_settings(self, kind="keyboard"):
         def worker():
             if open_system_settings(kind):
-                self._speak("已打开系统快捷键设置。请在键盘设置里找到查看及自定义快捷键。" if kind == "keyboard" else "已打开启动应用程序设置。")
+                self._speak(_("settings_opened_message") if kind == "keyboard" else _("open_startup"))
             else:
                 self.icon.notify(
                     _("error_open_settings_notification"),
