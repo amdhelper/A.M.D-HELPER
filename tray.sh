@@ -33,6 +33,53 @@ if [ ! -f "$VENV_ACTIVATOR" ]; then
     exit 1
 fi
 
+# --- Python 版本 / 依赖自检（Ubuntu 大版本升级后 venv 会失效）-------------
+# 系统升级（例如 Python 3.12 -> 3.14）后，venv 里 site-packages 的预编译扩展
+# 全部无法加载，表现为启动即报 "ModuleNotFoundError: No module named 'pystray'"。
+# 这里主动检测并尝试自动重建，避免用户只看到一个不出现的托盘图标。
+SYS_PYTHON="/usr/bin/python3"
+[ -x "$SYS_PYTHON" ] || SYS_PYTHON="$(command -v python3)"
+SYS_PY_VER=$("$SYS_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "")
+VENV_PY_VER=""
+if [ -f "$APP_DIR/venv/pyvenv.cfg" ]; then
+    VENV_PY_VER=$(sed -n 's/^version = \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$APP_DIR/venv/pyvenv.cfg" | head -n 1)
+fi
+
+NEED_REPAIR=0
+REPAIR_REASON=""
+if [ -n "$VENV_PY_VER" ] && [ -n "$SYS_PY_VER" ] && [ "$VENV_PY_VER" != "$SYS_PY_VER" ]; then
+    NEED_REPAIR=1
+    REPAIR_REASON="虚拟环境 Python $VENV_PY_VER 与系统 Python $SYS_PY_VER 不匹配"
+elif ! "$APP_DIR/venv/bin/python" -c "import pystray, PIL" >/dev/null 2>&1; then
+    NEED_REPAIR=1
+    REPAIR_REASON="虚拟环境缺少运行依赖（pystray/PIL 无法导入）"
+fi
+
+if [ "$NEED_REPAIR" -eq 1 ]; then
+    echo "ERROR: $REPAIR_REASON" >> "$LOG_FILE"
+    echo "尝试运行 repair-venv.sh 自动修复..." >> "$LOG_FILE"
+    REPAIRED=0
+    if [ "$(id -u)" -eq 0 ]; then
+        "$APP_DIR/repair-venv.sh" >> "$LOG_FILE" 2>&1 && REPAIRED=1
+    elif sudo -n true 2>/dev/null; then
+        sudo -n "$APP_DIR/repair-venv.sh" >> "$LOG_FILE" 2>&1 && REPAIRED=1
+    elif command -v pkexec >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        # 弹出系统授权框（用户输入一次密码），修复过程全自动
+        pkexec "$APP_DIR/repair-venv.sh" >> "$LOG_FILE" 2>&1 && REPAIRED=1
+    fi
+
+    if [ "$REPAIRED" -ne 1 ]; then
+        echo "FATAL: $REPAIR_REASON；自动修复未完成。请运行: sudo $APP_DIR/repair-venv.sh" >> "$LOG_FILE"
+        if command -v zenity >/dev/null 2>&1; then
+            zenity --error --no-wrap --title="A.M.D-HELPER 需要修复" \
+                --text="$REPAIR_REASON。\n\n请在终端执行：\nsudo $APP_DIR/repair-venv.sh\n\n执行完成后重新登录即可恢复。" \
+                >/dev/null 2>&1 || true
+        fi
+        exit 1
+    fi
+    echo "虚拟环境已修复，继续启动。" >> "$LOG_FILE"
+fi
+
 # Check if tray.py exists
 if [ ! -f "$APP_DIR/tray.py" ]; then
     echo "FATAL: tray.py not found at $APP_DIR/tray.py. Cannot start tray service." >> "$LOG_FILE"
@@ -82,9 +129,14 @@ fi
 
 # Set up GTK and GUI environment variables
 export GTK_DEBUG=""
-export GDK_BACKEND="x11"
 export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-x11}"
 export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-GNOME}"
+# 仅在 Xorg 会话强制 X11 后端。Wayland 会话（Ubuntu 26.04 默认）下强制
+# GDK_BACKEND=x11 会退化到 XWayland，可能拿不到显示授权（实测出现
+# "Authorization required" 警告）。
+if [ "$XDG_SESSION_TYPE" = "x11" ]; then
+    export GDK_BACKEND="x11"
+fi
 
 # Ensure GUI libraries can be found
 export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
@@ -110,6 +162,9 @@ echo "PYTHONPATH=$PYTHONPATH" >> "$LOG_FILE"
 
 # Activate the virtual environment
 echo "Activating virtual environment..." >> "$LOG_FILE"
+# 忽略 ~/.local/lib/pythonX.Y/site-packages，避免用户环境里的旧版包
+# （numpy/torch 等）混入 venv 造成难以复现的导入错误。
+export PYTHONNOUSERSITE=1
 source "$VENV_ACTIVATOR"
 
 # Verify virtual environment activation

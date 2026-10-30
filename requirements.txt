@@ -6,7 +6,11 @@ edge-tts>=7.0.0
 # System Tray and D-Bus
 pystray
 dbus-next
-PyGObject
+# 注意: PyGObject 不通过 pip 安装。
+#   PyPI 上没有 PyGObject 的预编译 wheel，在 Ubuntu 24.04+ / Python 3.13+ 上
+#   pip 会现场编译并因缺少 libgirepository 头文件而失败。
+#   系统包 python3-gi（deb Depends 已声明）通过 venv --system-site-packages
+#   提供 gi / Gtk 3.0 / Atspi 2.0，与系统解释器版本天然匹配。
 
 # GUI and Clipboard
 Pillow
@@ -14,5 +18,8 @@ pyperclip
 mss
 jeepney
 
-# Audio Playback (often a dependency of other libs, but good to be explicit)
-pygame
+# Audio Playback
+# pygame 官方没有 Python 3.13/3.14 的 wheel（源码编译在 3.14 上也失败）。
+# pygame-ce 是社区维护的 API 兼容分支（import pygame 不变），
+# 提供 cp310~cp314 全平台预编译 wheel。
+pygame-ce>=2.5.4

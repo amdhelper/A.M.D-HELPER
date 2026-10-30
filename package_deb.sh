@@ -54,7 +54,7 @@ Package: $APP_NAME
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Depends: python3, python3-venv, python3-pip, python3-gi, gir1.2-gdkpixbuf-2.0, gnome-settings-daemon, coreutils, procps
+Depends: python3, python3-venv, python3-pip, python3-gi, gir1.2-gdkpixbuf-2.0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, gnome-settings-daemon, coreutils, procps, zenity
 Description: $DESCRIPTION_SHORT
  $DESCRIPTION_LONG
 EOF
@@ -64,10 +64,23 @@ echo "Creating DEBIAN/postinst script for automated setup..."
 cat <<'POSTINST_EOF' > "$DEB_DIR/DEBIAN/postinst"
 #!/bin/bash
 set -e
+# 注意: 下面多处使用 "cmd | tee -a LOG" 形式。没有 pipefail 时 if 判断的是 tee
+# 的退出码（恒为 0），安装失败会被静默吞掉。必须开启 pipefail。
+set -o pipefail
 
 APP_DIR="/usr/share/a.m.d-helper"
 VENV_DIR="$APP_DIR/venv"
 LOG_FILE="/tmp/a.m.d-helper-install.log"
+
+# 显式使用系统解释器，避免 PATH 里存在 conda/pyenv/Hermes 等自带 python3
+# 时把 venv 绑到错误解释器上（系统 python3-gi 只对系统解释器可见）。
+SYS_PYTHON="/usr/bin/python3"
+[ -x "$SYS_PYTHON" ] || SYS_PYTHON="$(command -v python3)"
+
+# 安装期屏蔽 ~/.local/lib/pythonX.Y/site-packages：否则 pip 会认为用户目录
+# 里已有的 Pillow/numpy 等"已满足"，不在 venv 内安装；而 tray.sh 运行时设置了
+# PYTHONNOUSERSITE=1，启动时就会报 ModuleNotFoundError。
+export PYTHONNOUSERSITE=1
 
 echo "--- A.M.D-HELPER Installation Log ---" > "$LOG_FILE"
 date >> "$LOG_FILE"
@@ -81,15 +94,36 @@ USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 echo "Installation user: $REAL_USER, HOME: $USER_HOME" >> "$LOG_FILE"
 
 # --- 1. Create and populate virtual environment ---
-echo "Creating Python virtual environment..."
-python3 -m venv --system-site-packages "$VENV_DIR" >> "$LOG_FILE" 2>&1
+# Ubuntu 大版本升级后系统 python3 可能换了小版本（例如 3.12 -> 3.14），
+# 旧 venv 里的 pyvenv.cfg 仍指向旧版本，site-packages 里的二进制扩展全部失效，
+# 表现为 "ModuleNotFoundError: No module named 'pystray'" 之类错误。
+# 这里检测版本不一致就重建 venv，保证覆盖升级后应用仍能启动。
+SYS_PY_VER=$("$SYS_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+VENV_PY_VER=""
+if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
+    VENV_PY_VER=$(sed -n 's/^version = \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$VENV_DIR/pyvenv.cfg" | head -n 1)
+fi
+
+if [ -n "$VENV_PY_VER" ] && [ "$VENV_PY_VER" != "$SYS_PY_VER" ]; then
+    echo "检测到 Python 版本变化 (旧 venv=$VENV_PY_VER, 系统=$SYS_PY_VER)，正在重建虚拟环境..." | tee -a "$LOG_FILE"
+    rm -rf "$VENV_DIR"
+fi
+
+echo "Creating Python virtual environment (Python $SYS_PY_VER)..."
+"$SYS_PYTHON" -m venv --system-site-packages "$VENV_DIR" >> "$LOG_FILE" 2>&1
+
+if ! "$VENV_DIR/bin/python" -c 'import sys' >/dev/null 2>&1; then
+    echo "虚拟环境解释器不可用，强制重建..." | tee -a "$LOG_FILE"
+    rm -rf "$VENV_DIR"
+    "$SYS_PYTHON" -m venv --system-site-packages "$VENV_DIR" >> "$LOG_FILE" 2>&1
+fi
 
 echo "Installing Python dependencies. This may take several minutes..."
 
 PIP_MIRROR_OPTIONS="--index-url https://pypi.tuna.tsinghua.edu.cn/simple"
-PIP_TIMEOUT_OPTION="--timeout 90"
+PIP_TIMEOUT_OPTION="--timeout 90 --retries 3"
 
-echo "Step 1/3: Upgrading pip..."
+echo "Step 1/5: Upgrading pip..."
 if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS --upgrade pip 2>&1 | tee -a "$LOG_FILE"; then
     if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION --upgrade pip 2>&1 | tee -a "$LOG_FILE"; then
         echo "FATAL: Failed to upgrade pip." | tee -a "$LOG_FILE"
@@ -97,7 +131,23 @@ if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS --upgra
     fi
 fi
 
-echo "Step 2/3: Installing application requirements..."
+echo "Step 2/5: Installing PyTorch (CPU build)..."
+# easyocr 依赖 torch/torchvision。默认 PyPI 轮子会拖入整套 NVIDIA CUDA 运行库
+# （6GB+），对无 NVIDIA 显卡的机器既占磁盘又拖慢安装。优先装 CPU 版。
+# 只从 PyTorch 官方 CPU 源取 torch/torchvision 两个 wheel（--no-deps），
+# 其余纯 Python 依赖走镜像源，避免官方 CDN 在部分网络下反复断线。
+if "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION --no-deps --index-url https://download.pytorch.org/whl/cpu torch torchvision 2>&1 | tee -a "$LOG_FILE"; then
+    echo "PyTorch (CPU) 下载完成，安装其纯 Python 依赖..." | tee -a "$LOG_FILE"
+    "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS filelock typing-extensions sympy networkx jinja2 fsspec >> "$LOG_FILE" 2>&1 \
+        || echo "警告: PyTorch 依赖安装不完整。" | tee -a "$LOG_FILE"
+else
+    echo "CPU 版 PyTorch 安装失败，回退到默认镜像源（将包含 CUDA 依赖，体积较大）..." | tee -a "$LOG_FILE"
+    if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS torch torchvision 2>&1 | tee -a "$LOG_FILE"; then
+        echo "警告: PyTorch 安装失败，OCR 功能将不可用。" | tee -a "$LOG_FILE"
+    fi
+fi
+
+echo "Step 3/5: Installing application requirements..."
 if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS -r "$APP_DIR/requirements.txt" 2>&1 | tee -a "$LOG_FILE"; then
     if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION -r "$APP_DIR/requirements.txt" 2>&1 | tee -a "$LOG_FILE"; then
         echo "FATAL: Failed to install requirements." | tee -a "$LOG_FILE"
@@ -105,11 +155,40 @@ if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS -r "$AP
     fi
 fi
 
-echo "Step 3/3: Installing local libshot library..."
+echo "Step 4/5: Installing local libshot library..."
 if ! "$VENV_DIR/bin/pip" install "$APP_DIR/libshot" 2>&1 | tee -a "$LOG_FILE"; then
     echo "FATAL: Failed to install local libshot library." | tee -a "$LOG_FILE"
     exit 1
 fi
+
+echo "Step 5/5: Verifying the virtual environment..."
+if ! "$VENV_DIR/bin/python" - <<'PY_VERIFY' 2>&1 | tee -a "$LOG_FILE"
+import sys
+
+missing = []
+for mod in ("gi", "pystray", "dbus_next", "PIL", "pyperclip", "mss", "jeepney", "pygame", "edge_tts", "easyocr", "torch"):
+    try:
+        __import__(mod)
+    except Exception as exc:
+        missing.append("%s: %s" % (mod, exc))
+
+if missing:
+    print("MISSING_OR_BROKEN:")
+    print("\n".join(missing))
+    sys.exit(1)
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Atspi", "2.0")
+from gi.repository import Gtk, Atspi  # noqa: F401
+print("环境自检通过: Python %s, 运行依赖齐全。" % sys.version.split()[0])
+PY_VERIFY
+then
+    echo "FATAL: 虚拟环境自检失败，应用可能无法启动（详见 $LOG_FILE）。" | tee -a "$LOG_FILE"
+    echo "可运行 'sudo $APP_DIR/repair-venv.sh' 重新构建环境。" | tee -a "$LOG_FILE"
+    exit 1
+fi
+
 echo "Dependency installation complete."
 
 # --- 1.5 Download Piper TTS models ---
@@ -173,6 +252,7 @@ echo "Setting file permissions..."
     chmod +x "$APP_DIR/run.sh" 2>/dev/null || true
     chmod +x "$APP_DIR/run_hover.sh" 2>/dev/null || true
     chmod +x "$APP_DIR/tray.sh" 2>/dev/null || true
+    chmod +x "$APP_DIR/repair-venv.sh" 2>/dev/null || true
 } >> "$LOG_FILE" 2>&1
 
 # --- 3. Set custom keyboard shortcut for F4 ---
@@ -234,7 +314,7 @@ add_slot_to_list() {
         NEW="['$SLOT']"
     else
         # 使用 Python 来安全处理列表操作，避免 sed 斜杠问题
-        NEW=$(python3 -c "
+        NEW=$(/usr/bin/python3 -c "
 import ast
 current = ast.literal_eval('$CURRENT')
 slot = '$SLOT'

@@ -8,3 +8,8 @@ models/
 libshot/venv/
 # 忽略所有 .deb 文件
 *.deb
+
+# Python 字节码 / 本地代码索引
+__pycache__/
+*.pyc
+.ai-memory/

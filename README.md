@@ -26,9 +26,33 @@ python3 -m venv venv --system-site-packages
 source venv/bin/activate
 
 # 安装所有需要的Python库
-pip install pystray Pillow pygame pyperclip easyocr edge-tts mss jeepney dbus-next piper-tts
+# 说明: 使用 requirements.txt，而不是手工列包名。
+pip install -r requirements.txt
 ```
-**注意**: `PyGObject` 库用于提供 `gi` 模块。如果您的虚拟环境没有使用 `--system-site-packages` 标志创建，并且遇到了 `gi` 模块相关的错误，请在虚拟环境中执行 `pip install PyGObject`。
+
+**关于依赖的三条硬约束（Ubuntu 24.04+/26.04 实测）：**
+
+1. **PyGObject 不要用 pip 安装**。PyPI 上没有预编译 wheel，Python 3.13+ 下 pip 会现场编译并失败。`gi` / `Gtk` / `Atspi` 由系统包 `python3-gi` 提供，venv 必须带 `--system-site-packages` 创建。`requirements.txt` 里已不包含 PyGObject。
+2. **pygame 在 Python 3.13/3.14 没有 wheel**（源码编译同样失败），因此改用 API 兼容的 `pygame-ce`（`import pygame` 不变）。
+3. **torch/torchvision 建议用 CPU 版**：默认 PyPI 轮子会拖入 6GB+ 的 NVIDIA CUDA 运行库。无 NVIDIA 显卡时执行
+   `pip install --no-deps --index-url https://download.pytorch.org/whl/cpu torch torchvision`
+   再 `pip install -r requirements.txt` 即可。
+
+### 系统升级后托盘图标消失/启动即退出
+
+Ubuntu 大版本升级会更换系统 Python（例如 26.04 是 3.14）。旧 venv 的 `site-packages` 里的预编译扩展全部失效，表现为日志里：
+
+```
+ModuleNotFoundError: No module named 'pystray'
+```
+
+修复（幂等，只重建 venv，不动模型和配置）：
+
+```bash
+sudo /usr/share/a.m.d-helper/repair-venv.sh
+```
+
+新版 deb 的 `postinst` 与 `tray.sh` 都会自动检测 Python 版本变化并重建环境；上面的命令用于手工兜底。
 
 ### 下载TTS 模型 (Piper)
 Piper是一个离线的TTS引擎，需要您手动下载放置语音模型。
