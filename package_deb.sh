@@ -82,6 +82,13 @@ SYS_PYTHON="/usr/bin/python3"
 # PYTHONNOUSERSITE=1，启动时就会报 ModuleNotFoundError。
 export PYTHONNOUSERSITE=1
 
+# 让所有 pip 子进程（含 PEP 517 构建隔离环境）默认走镜像源。
+# 否则 pip 会去 pypi.org 拉 setuptools 等构建依赖，国内网络下会长时间卡在
+# "Installing build dependencies: still running..."。显式 --index-url 仍可覆盖。
+export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+export PIP_TIMEOUT=90
+export PIP_RETRIES=3
+
 echo "--- A.M.D-HELPER Installation Log ---" > "$LOG_FILE"
 date >> "$LOG_FILE"
 echo "------------------------------------" >> "$LOG_FILE"

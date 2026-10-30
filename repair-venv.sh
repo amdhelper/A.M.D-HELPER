@@ -37,6 +37,10 @@ SYS_PYTHON="/usr/bin/python3"
 [ -x "$SYS_PYTHON" ] || SYS_PYTHON="$(command -v python3)"
 # 同 postinst：避免 pip 因 ~/.local 里已有包而跳过 venv 内的安装。
 export PYTHONNOUSERSITE=1
+# 构建隔离环境（PEP 517）也走镜像源，避免 pypi.org 不可达时卡死。
+export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+export PIP_TIMEOUT=90
+export PIP_RETRIES=3
 SYS_PY_VER=$("$SYS_PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 VENV_PY_VER=""
 if [ -f "$VENV_DIR/pyvenv.cfg" ]; then
