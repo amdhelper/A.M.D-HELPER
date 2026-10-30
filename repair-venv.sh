@@ -84,10 +84,23 @@ chown -R root:root "$VENV_DIR" 2>/dev/null || true
 
 echo "自检 ..." | tee -a "$LOG_FILE"
 if "$VENV_DIR/bin/python" - <<'PY_VERIFY' >> "$LOG_FILE" 2>&1
+import importlib.util
 import sys
 
 missing = []
-for mod in ("gi", "pystray", "dbus_next", "PIL", "pyperclip", "mss", "jeepney", "pygame", "edge_tts", "easyocr", "torch"):
+
+# 只检查安装状态，不做导入（避免副作用）
+for mod in ("gi", "pystray", "dbus_next", "PIL", "pyperclip", "mss", "jeepney",
+            "pygame", "edge_tts", "easyocr", "torch"):
+    try:
+        if importlib.util.find_spec(mod) is None:
+            missing.append("%s: 未安装" % mod)
+    except (ImportError, ValueError) as exc:
+        missing.append("%s: %s" % (mod, exc))
+
+# 实际导入关键模块；跳过 pystray（无 DISPLAY 时会连 X 失败，属环境限制）
+for mod in ("gi", "PIL", "dbus_next", "pyperclip", "mss", "jeepney", "pygame",
+            "edge_tts", "easyocr", "torch"):
     try:
         __import__(mod)
     except Exception as exc:

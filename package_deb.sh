@@ -179,10 +179,25 @@ fi
 
 echo "Step 5/5: Verifying the virtual environment..."
 if ! "$VENV_DIR/bin/python" - <<'PY_VERIFY' 2>&1 | tee -a "$LOG_FILE"
+import importlib.util
 import sys
 
 missing = []
-for mod in ("gi", "pystray", "dbus_next", "PIL", "pyperclip", "mss", "jeepney", "pygame", "edge_tts", "easyocr", "torch"):
+
+# 1) 先只检查"装没装"，不做导入，避免副作用
+for mod in ("gi", "pystray", "dbus_next", "PIL", "pyperclip", "mss", "jeepney",
+            "pygame", "edge_tts", "easyocr", "torch"):
+    try:
+        if importlib.util.find_spec(mod) is None:
+            missing.append("%s: 未安装" % mod)
+    except (ImportError, ValueError) as exc:
+        missing.append("%s: %s" % (mod, exc))
+
+# 2) 实际导入关键模块。
+#    故意跳过 pystray：它在 root 的 dpkg 环境里（无 DISPLAY）导入时会去连 X，
+#    抛 "Bad display name"，但这不代表运行环境有问题（桌面会话里有 DISPLAY）。
+for mod in ("gi", "PIL", "dbus_next", "pyperclip", "mss", "jeepney", "pygame",
+            "edge_tts", "easyocr", "torch"):
     try:
         __import__(mod)
     except Exception as exc:

@@ -50,9 +50,9 @@ REPAIR_REASON=""
 if [ -n "$VENV_PY_VER" ] && [ -n "$SYS_PY_VER" ] && [ "$VENV_PY_VER" != "$SYS_PY_VER" ]; then
     NEED_REPAIR=1
     REPAIR_REASON="虚拟环境 Python $VENV_PY_VER 与系统 Python $SYS_PY_VER 不匹配"
-elif ! "$APP_DIR/venv/bin/python" -c "import pystray, PIL" >/dev/null 2>&1; then
+elif ! "$APP_DIR/venv/bin/python" -c "import importlib.util as u, sys; sys.exit(0 if all(u.find_spec(m) for m in ('pystray','PIL','gi','easyocr','torch','pygame')) else 1)" >/dev/null 2>&1; then
     NEED_REPAIR=1
-    REPAIR_REASON="虚拟环境缺少运行依赖（pystray/PIL 无法导入）"
+    REPAIR_REASON="虚拟环境缺少运行依赖（pystray/PIL/easyocr 等未安装）"
 fi
 
 if [ "$NEED_REPAIR" -eq 1 ]; then
