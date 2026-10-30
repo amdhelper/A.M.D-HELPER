@@ -60,7 +60,7 @@ APP_NAME = "A.M.D-HELPER"
 DBUS_SERVICE_NAME = "org.amd_helper.Service"
 DBUS_INTERFACE_NAME = "org.amd_helper.Interface"
 DBUS_OBJECT_PATH = "/org/amd_helper/Main"
-VERSION = "0.56.11"
+VERSION = "0.57.0"
 CONTACT_EMAIL = "postmaster@mail.430022.xyz"
 ABOUT_TEXT = "This tool provides instant OCR and TTS functionality."
 
@@ -89,6 +89,11 @@ TRANSLATIONS = {
         "copy_f4": "Copy F4 Screenshot Command",
         "copy_f1": "Copy F1 Hover Command",
         "open_shortcuts": "Open System Shortcuts",
+        "repair_shortcut": "Re-bind F4 Shortcut",
+        "shortcut_fixed_notification": "Shortcut Ready",
+        "shortcut_fixed_message": "F4 is now bound to A.M.D-HELPER.",
+        "shortcut_failed_notification": "Shortcut Setup Failed",
+        "shortcut_failed_message": "Could not bind F4 automatically. Open system shortcut settings and bind F4 to /usr/share/a.m.d-helper/run.sh",
         "copy_startup": "Copy Autostart Command",
         "open_startup": "Open Autostart Settings",
         "tts_switched_notification": "TTS Engine Switched",
@@ -98,7 +103,7 @@ TRANSLATIONS = {
         "command_copied_notification": "Copied Successfully",
         "command_copied_message": "Command copied to clipboard.",
         "error_pyperclip_notification": "Copy Failed",
-        "error_pyperclip_message": "Requires 'pyperclip' library. Please run: pip install pyperclip",
+        "error_pyperclip_message": "No clipboard tool available. Please install 'wl-clipboard' (Wayland) or 'xclip' (X11).",
         "error_open_settings_notification": "Operation Failed",
         "error_open_settings_message": "Could not open system settings automatically. Please open them manually.",
         "about_window_title": f"About {APP_NAME}",
@@ -128,6 +133,11 @@ TRANSLATIONS = {
         "copy_f4": "复制F4截图命令",
         "copy_f1": "复制F1悬停命令",
         "open_shortcuts": "打开系统快捷键设置",
+        "repair_shortcut": "重新绑定F4快捷键",
+        "shortcut_fixed_notification": "快捷键已就绪",
+        "shortcut_fixed_message": "F4 已绑定到 A.M.D-HELPER",
+        "shortcut_failed_notification": "快捷键设置失败",
+        "shortcut_failed_message": "无法自动绑定 F4。请在系统快捷键设置里把 F4 绑定到 /usr/share/a.m.d-helper/run.sh",
         "copy_startup": "复制自启动命令",
         "open_startup": "打开自启动设置",
         "tts_switched_notification": "TTS引擎已切换",
@@ -137,7 +147,7 @@ TRANSLATIONS = {
         "command_copied_notification": "复制成功",
         "command_copied_message": "命令已复制到剪贴板",
         "error_pyperclip_notification": "复制失败",
-        "error_pyperclip_message": "需要 'pyperclip' 库，请运行: pip install pyperclip",
+        "error_pyperclip_message": "系统没有可用的剪贴板工具，请安装 wl-clipboard（Wayland）或 xclip（X11）。",
         "error_open_settings_notification": "操作失败",
         "error_open_settings_message": "无法自动打开系统设置，请手动操作。",
         "about_window_title": f"关于 {APP_NAME}",
@@ -167,6 +177,11 @@ TRANSLATIONS = {
         "copy_f4": "複製F4截圖命令",
         "copy_f1": "複製F1懸停命令",
         "open_shortcuts": "打開系統快捷鍵設定",
+        "repair_shortcut": "重新綁定F4快捷鍵",
+        "shortcut_fixed_notification": "快捷鍵已就緒",
+        "shortcut_fixed_message": "F4 已綁定到 A.M.D-HELPER",
+        "shortcut_failed_notification": "快捷鍵設定失敗",
+        "shortcut_failed_message": "無法自動綁定 F4。請在系統快捷鍵設定裡把 F4 綁定到 /usr/share/a.m.d-helper/run.sh",
         "copy_startup": "複製自啟動命令",
         "open_startup": "打開自啟動設定",
         "tts_switched_notification": "TTS引擎已切換",
@@ -176,7 +191,7 @@ TRANSLATIONS = {
         "command_copied_notification": "複製成功",
         "command_copied_message": "命令已複製到剪貼簿",
         "error_pyperclip_notification": "複製失敗",
-        "error_pyperclip_message": "需要 'pyperclip' 庫，請運行: pip install pyperclip",
+        "error_pyperclip_message": "系統沒有可用的剪貼簿工具，請安裝 wl-clipboard（Wayland）或 xclip（X11）。",
         "error_open_settings_notification": "操作失敗",
         "error_open_settings_message": "無法自動打開系統設定，請手動操作。",
         "about_window_title": f"關於 {APP_NAME}",
@@ -295,6 +310,120 @@ try:
     PYPERCLIP_AVAILABLE = True
 except ImportError:
     PYPERCLIP_AVAILABLE = False
+
+
+def copy_to_clipboard(text: str) -> bool:
+    """把文本写入系统剪贴板（Wayland 优先 wl-copy，X11 用 xclip）。
+
+    不能用 pyperclip：它内部的 wl-copy 调用会继承管道，
+    在 Wayland 下 communicate() 永远不返回（托盘菜单直接卡死）。
+    这里把子进程 stdout/stderr 指到 DEVNULL 并设超时，保证菜单不阻塞。
+    """
+    env = os.environ.copy()
+    wayland = bool(env.get("WAYLAND_DISPLAY"))
+    display = bool(env.get("DISPLAY"))
+
+    candidates = []
+    if wayland and shutil.which("wl-copy"):
+        candidates.append(["wl-copy"])
+    if display and shutil.which("xclip"):
+        candidates.append(["xclip", "-selection", "clipboard"])
+    if display and shutil.which("xsel"):
+        candidates.append(["xsel", "-b", "-i"])
+    if wayland and shutil.which("wl-copy") and ["wl-copy"] not in candidates:
+        candidates.append(["wl-copy"])
+    if shutil.which("xclip") and ["xclip", "-selection", "clipboard"] not in candidates:
+        candidates.append(["xclip", "-selection", "clipboard"])
+
+    payload = text.encode("utf-8")
+    for cmd in candidates:
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            proc.communicate(input=payload, timeout=3)
+            if proc.returncode == 0:
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"剪贴板命令失败 {cmd}: {exc}")
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    # 最后兜底：pyperclip（X11 下一般可用；Wayland 下可能阻塞，放到子线程里跑）
+    if PYPERCLIP_AVAILABLE:
+        try:
+            result = {}
+
+            def _do():
+                try:
+                    import pyperclip as _pc
+
+                    _pc.copy(text)
+                    result["ok"] = True
+                except Exception:  # noqa: BLE001
+                    result["ok"] = False
+
+            th = threading.Thread(target=_do, daemon=True)
+            th.start()
+            th.join(2.0)
+            return result.get("ok", False)
+        except Exception:  # noqa: BLE001
+            pass
+    return False
+
+
+def open_system_settings(kind="keyboard"):
+    """打开系统设置面板（kind: keyboard=快捷键 / autostart=自启动）。"""
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if kind == "autostart":
+        candidates = [
+            ["gnome-session-properties"],
+            ["gnome-startup-applications"],
+            ["kcmshell6", "kcm_autostart"],
+            ["kcmshell5", "kcm_autostart"],
+            ["xfce4-session-settings"],
+        ]
+    else:
+        candidates = []
+        if "gnome" in desktop or "ubuntu" in desktop or "unity" in desktop:
+            candidates = [
+                ["gnome-control-center", "keyboard"],
+                ["gnome-control-center", "keyboard", "shortcuts"],
+            ]
+        elif "kde" in desktop or "plasma" in desktop:
+            candidates = [["systemsettings5", "shortcuts"], ["systemsettings", "kcm_keys"]]
+        elif "xfce" in desktop:
+            candidates = [["xfce4-keyboard-settings"]]
+        candidates += [
+            ["gnome-control-center", "keyboard"],
+            ["systemsettings5", "shortcuts"],
+            ["xfce4-keyboard-settings"],
+        ]
+
+    for cmd in candidates:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            # GUI 程序会一直活着（或转发给已运行实例），不能等它退出
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                return True
+            if proc.returncode == 0:
+                return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"打开设置失败 {cmd}: {exc}")
+    return False
 
 # --- 关于窗口 ---
 # 延迟导入 tkinter 以避免在非GUI环境中出现问题
@@ -557,6 +686,52 @@ def show_report_issue_window():
 
 
 # --- 主应用类 ---
+def cleanup_stuck_screenshot_processes():
+    """清理旧版本 libshot 留下的 gnome-screenshot -a 僵尸进程。
+
+    Ubuntu 26.04 / GNOME Shell 50 下 `gnome-screenshot -a` 会永久挂住，
+    并且把它抓住的那一帧冻结住，之后所有截图都返回同一张旧图。
+    只杀我们自己的临时文件（-f /tmp/tmp*.png）对应的进程，不碰用户手动开的。
+    """
+    killed = 0
+    try:
+        for pid_dir in os.listdir("/proc"):
+            if not pid_dir.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid_dir}/cmdline", "rb") as fh:
+                    cmdline = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+            except OSError:
+                continue
+            if "gnome-screenshot" in cmdline and "-a" in cmdline and "/tmp/tmp" in cmdline:
+                try:
+                    os.kill(int(pid_dir), 9)
+                    killed += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    if killed:
+        logger.warning(f"清理了 {killed} 个卡死的 gnome-screenshot -a 进程")
+
+
+def ensure_shortcut_binding():
+    """托盘启动时再确认一次 F4 绑定（deb 安装时没赶上图形会话也能自愈）。"""
+    script = os.path.join(SCRIPT_DIR, "shortcut_setup.py")
+    if not os.path.exists(script):
+        return
+    try:
+        proc = subprocess.run(
+            [sys.executable, script], capture_output=True, text=True, timeout=30
+        )
+        if proc.returncode == 0:
+            logger.info("F4 快捷键自检通过")
+        else:
+            logger.warning(f"F4 快捷键自检失败：{(proc.stdout or '').strip()[-500:]}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"F4 快捷键自检异常: {exc}")
+
+
 class AppTray:
     def __init__(self):
         self.icon = None
@@ -606,16 +781,47 @@ class AppTray:
             )
 
     def _copy_command_action(self, command_to_copy):
-        if not PYPERCLIP_AVAILABLE:
+        ok = copy_to_clipboard(command_to_copy)
+        if ok:
+            self.icon.notify(
+                _("command_copied_notification"),
+                _("command_copied_message") + "\n" + command_to_copy,
+            )
+        else:
             self.icon.notify(_("error_pyperclip_notification"), _("error_pyperclip_message"))
-            return
-        pyperclip.copy(command_to_copy)
-        self.icon.notify(_("command_copied_notification"), _("command_copied_message"))
 
-    def _open_settings(self, commands):
-        opened = any(subprocess.run(cmd.split(), capture_output=True).returncode == 0 for cmd in commands)
-        if not opened:
-            self.icon.notify(_("error_open_settings_notification"), _("error_open_settings_message"))
+    def _open_settings(self, kind="keyboard"):
+        def worker():
+            if not open_system_settings(kind):
+                self.icon.notify(
+                    _("error_open_settings_notification"),
+                    _("error_open_settings_message"),
+                )
+
+        # 别在托盘菜单线程里等 GUI 程序，避免菜单卡住
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _repair_shortcut(self):
+        """重新写入 F4 快捷键绑定（用户手动修复入口）。"""
+        script = os.path.join(SCRIPT_DIR, "shortcut_setup.py")
+
+        def worker():
+            ok = False
+            try:
+                proc = subprocess.run(
+                    [sys.executable, script], capture_output=True, text=True, timeout=30
+                )
+                ok = proc.returncode == 0
+                if not ok:
+                    logger.warning(f"快捷键修复失败: {proc.stdout}\n{proc.stderr}")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"快捷键修复异常: {exc}")
+            if ok:
+                self.icon.notify(_("shortcut_fixed_notification"), _("shortcut_fixed_message"))
+            else:
+                self.icon.notify(_("shortcut_failed_notification"), _("shortcut_failed_message"))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def show_about_window(self):
         # 在单独的线程中运行UI，以避免阻塞主事件循环
@@ -641,10 +847,12 @@ class AppTray:
             MenuItem(_('help'), Menu(
                 MenuItem(_('copy_f4'), lambda: self._copy_command_action(f4_command)),
                 MenuItem(_('copy_f1'), lambda: self._copy_command_action(f1_command)),
-                MenuItem(_('open_shortcuts'), lambda: self._open_settings(["gnome-control-center keyboard", "systemsettings5 shortcuts", "xfce4-keyboard-settings"])),
+                Menu.SEPARATOR,
+                MenuItem(_('repair_shortcut'), self._repair_shortcut),
+                MenuItem(_('open_shortcuts'), lambda: self._open_settings("keyboard")),
                 Menu.SEPARATOR,
                 MenuItem(_('copy_startup'), lambda: self._copy_command_action(tray_command)),
-                MenuItem(_('open_startup'), lambda: self._open_settings(["gnome-session-properties", "gnome-startup-applications", "kcmshell5 kcm_autostart"]))
+                MenuItem(_('open_startup'), lambda: self._open_settings("autostart"))
             )),
             MenuItem(_('report_issue'), lambda: threading.Thread(target=show_report_issue_window, daemon=True).start()),
             MenuItem(_('about'), self.show_about_window),
@@ -671,6 +879,10 @@ class AppTray:
             return
 
         print("D-Bus服务名获取成功，应用为唯一实例。")
+
+        # 启动自愈：清掉会把屏幕冻住的旧截图进程 + 确认 F4 绑定
+        cleanup_stuck_screenshot_processes()
+        threading.Thread(target=ensure_shortcut_binding, daemon=True).start()
 
         print("正在加载AI模型，请稍候...")
         self.processor = OcrAndTtsProcessor()

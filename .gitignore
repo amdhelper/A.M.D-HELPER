@@ -13,3 +13,4 @@ libshot/venv/
 __pycache__/
 *.pyc
 .ai-memory/
+a.m.d-helper_*_amd64/

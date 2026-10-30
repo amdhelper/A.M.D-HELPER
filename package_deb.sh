@@ -9,7 +9,7 @@ set -e
 
 # --- Configuration ---
 APP_NAME="a.m.d-helper"
-VERSION="0.56.11"
+VERSION="0.57.0"
 ARCH="amd64"
 MAINTAINER="Your Name <your.email@example.com>"
 DESCRIPTION_SHORT="A screen reader and OCR application."
@@ -54,7 +54,7 @@ Package: $APP_NAME
 Version: $VERSION
 Architecture: $ARCH
 Maintainer: $MAINTAINER
-Depends: python3, python3-venv, python3-pip, python3-gi, gir1.2-gdkpixbuf-2.0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, gnome-settings-daemon, coreutils, procps, zenity
+Depends: python3, python3-venv, python3-pip, python3-gi, gir1.2-gtk-3.0, gir1.2-gdkpixbuf-2.0, gir1.2-ayatanaappindicator3-0.1, libayatana-appindicator3-1, gnome-settings-daemon, coreutils, procps, zenity, wl-clipboard | xclip
 Description: $DESCRIPTION_SHORT
  $DESCRIPTION_LONG
 EOF
@@ -286,157 +286,52 @@ echo "Setting file permissions..."
     chmod +x "$APP_DIR/repair-venv.sh" 2>/dev/null || true
 } >> "$LOG_FILE" 2>&1
 
-# --- 3. Set custom keyboard shortcut for F4 ---
+# --- 3. 自动绑定 F4 快捷键（GNOME / KDE / XFCE 自动识别）---
+# 具体逻辑在 /usr/share/a.m.d-helper/shortcut_setup.py（纯标准库、幂等），
+# 安装时以桌面用户身份执行一次；没赶上图形会话时由登录 autostart 再补一次。
 echo "Setting up keyboard shortcut..."
 {
-    if command -v gsettings &> /dev/null && [ -n "$USER_HOME" ]; then
-        echo "Setting up F4 keyboard shortcut for GNOME..."
+    if [ -n "$USER_HOME" ] && [ -f "$APP_DIR/shortcut_setup.py" ]; then
+        UID_NUM=$(id -u "$REAL_USER")
+        DBUS_ADDR="unix:path=/run/user/$UID_NUM/bus"
+        SETUP_CMD="/usr/bin/python3 $APP_DIR/shortcut_setup.py"
 
-        # 创建快捷键设置脚本
-        SHORTCUT_SCRIPT="$USER_HOME/.config/a.m.d-helper/setup-shortcut.sh"
-        mkdir -p "$USER_HOME/.config/a.m.d-helper"
-        
-        cat > "$SHORTCUT_SCRIPT" << 'SHORTCUT_EOF'
-#!/bin/bash
-# F4 快捷键设置脚本 - 修复版 v2
-LOG="/tmp/a.m.d-helper-shortcut.log"
-echo "=== 快捷键设置 $(date) ===" >> "$LOG"
-
-SHORTCUT_NAME="A.M.D-HELPER OCR"
-CMD="/usr/share/a.m.d-helper/run.sh"
-BINDING="F4"
-FOUND_SLOT=""
-
-# 检查是否已存在，同时验证 binding 是否正确设置
-for i in $(seq 0 19); do
-    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
-    NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null || echo "")
-    CURRENT_BINDING=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding 2>/dev/null || echo "")
-    CURRENT_CMD=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command 2>/dev/null || echo "")
-    echo "检查 custom$i: name=$NAME, binding=$CURRENT_BINDING, command=$CURRENT_CMD" >> "$LOG"
-    
-    if [[ "$NAME" == "'$SHORTCUT_NAME'" ]]; then
-        FOUND_SLOT="$i"
-        # 检查 binding 和 command 是否正确
-        if [[ "$CURRENT_BINDING" == "'$BINDING'" && "$CURRENT_CMD" == "'$CMD'" ]]; then
-            # 还需要检查是否在 custom-keybindings 列表中
-            KEYBINDINGS=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-            echo "当前快捷键列表: $KEYBINDINGS" >> "$LOG"
-            if [[ "$KEYBINDINGS" == *"$SLOT"* ]]; then
-                echo "快捷键已正确配置于 custom$i" >> "$LOG"
-                exit 0
+        if [ -S "/run/user/$UID_NUM/bus" ]; then
+            echo "检测到图形会话，立即绑定 F4..."
+            if su "$REAL_USER" -c "HOME='$USER_HOME' XDG_RUNTIME_DIR=/run/user/$UID_NUM DBUS_SESSION_BUS_ADDRESS='$DBUS_ADDR' DISPLAY='${DISPLAY:-:0}' $SETUP_CMD" 2>&1 | tee -a "$LOG_FILE"; then
+                echo "✅ F4 快捷键绑定成功"
             else
-                echo "快捷键存在但未在列表中，需要添加" >> "$LOG"
+                echo "⚠️ 快捷键绑定失败，登录时会自动重试"
             fi
         else
-            echo "快捷键存在但配置不完整，需要修复" >> "$LOG"
+            echo "未检测到图形会话（可能通过 SSH 安装），登录后自动绑定"
         fi
-        break
-    fi
-done
 
-# 添加槽位到列表的函数 (避免 sed 斜杠问题)
-add_slot_to_list() {
-    local SLOT="$1"
-    local CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-    echo "当前快捷键列表: $CURRENT" >> "$LOG"
-    
-    if [[ "$CURRENT" == "@as []" ]]; then
-        NEW="['$SLOT']"
-    else
-        # 使用 Python 来安全处理列表操作，避免 sed 斜杠问题
-        NEW=$(/usr/bin/python3 -c "
-import ast
-current = ast.literal_eval('$CURRENT')
-slot = '$SLOT'
-if slot not in current:
-    current.append(slot)
-print(current)
-" 2>/dev/null)
-        if [[ -z "$NEW" ]]; then
-            # Python 失败时的备用方案：直接去掉最后的 ] 并追加
-            NEW="${CURRENT%]}, '$SLOT']"
-        fi
-    fi
-    echo "新快捷键列表: $NEW" >> "$LOG"
-    gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "$NEW" 2>> "$LOG"
-}
-
-# 如果找到了但配置不完整，修复它
-if [[ -n "$FOUND_SLOT" ]]; then
-    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$FOUND_SLOT/"
-    echo "修复槽位 custom$FOUND_SLOT" >> "$LOG"
-    
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME" 2>> "$LOG"
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD" 2>> "$LOG"
-    gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING" 2>> "$LOG"
-    
-    # 确保在列表中
-    CURRENT=$(gsettings get org.gnome.settings-daemon.plugins.media-keys custom-keybindings)
-    if [[ "$CURRENT" != *"$SLOT"* ]]; then
-        add_slot_to_list "$SLOT"
-    fi
-    
-    echo "F4 快捷键修复成功 (slot: custom$FOUND_SLOT)" >> "$LOG"
-    exit 0
-fi
-
-# 查找空槽位创建新快捷键
-for i in $(seq 0 19); do
-    SLOT="/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom$i/"
-    NAME=$(gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name 2>/dev/null || echo "")
-    if [[ -z "$NAME" || "$NAME" == "''" ]]; then
-        echo "使用空槽位 custom$i" >> "$LOG"
-        
-        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" name "$SHORTCUT_NAME" 2>> "$LOG"
-        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" command "$CMD" 2>> "$LOG"
-        gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:"$SLOT" binding "$BINDING" 2>> "$LOG"
-        
-        add_slot_to_list "$SLOT"
-        
-        echo "F4 快捷键设置成功 (slot: custom$i)" >> "$LOG"
-        exit 0
-    fi
-done
-
-echo "没有可用的快捷键槽位" >> "$LOG"
-exit 1
-SHORTCUT_EOF
-
-        chmod +x "$SHORTCUT_SCRIPT"
-        chown "$REAL_USER:$REAL_USER" "$SHORTCUT_SCRIPT"
-        chown "$REAL_USER:$REAL_USER" "$USER_HOME/.config/a.m.d-helper"
-        
-        # 尝试立即执行快捷键设置（需要用户的 D-Bus 会话）
-        DBUS_ADDR="unix:path=/run/user/$(id -u $REAL_USER)/bus"
-        if [ -S "/run/user/$(id -u $REAL_USER)/bus" ]; then
-            echo "检测到用户 D-Bus 会话，立即设置快捷键..."
-            # 以用户身份运行，设置正确的环境变量
-            if su "$REAL_USER" -c "DBUS_SESSION_BUS_ADDRESS=$DBUS_ADDR $SHORTCUT_SCRIPT" 2>&1 | tee -a "$LOG_FILE"; then
-                echo "✅ F4 快捷键设置成功！"
-            else
-                echo "快捷键设置可能失败，将在下次登录时重试"
-            fi
-        else
-            echo "未检测到用户 D-Bus 会话（可能是 SSH 安装），将在下次登录时自动设置"
-        fi
-        
-        # 创建 autostart 条目作为备用 - 首次登录时自动设置快捷键
+        # 登录兜底：dconf 被重置 / 换了桌面环境时自动补绑定
         AUTOSTART_DIR="$USER_HOME/.config/autostart"
         mkdir -p "$AUTOSTART_DIR"
         cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
 [Desktop Entry]
 Type=Application
 Name=A.M.D-HELPER Shortcut Setup
-Exec=$SHORTCUT_SCRIPT
+Exec=/usr/bin/python3 $APP_DIR/shortcut_setup.py
 Hidden=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
-X-GNOME-Autostart-Delay=3
+X-GNOME-Autostart-Delay=5
 DESKTOP_EOF
         chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
-        
-        echo "快捷键设置完成。如需手动设置: $SHORTCUT_SCRIPT"
+    fi
+} >> "$LOG_FILE" 2>&1
+
+# --- 4. 升级场景：重启已在运行的托盘服务，让新代码立即生效 ---
+{
+    UID_NUM=$(id -u "$REAL_USER")
+    if [ -S "/run/user/$UID_NUM/bus" ]; then
+        pkill -f "$APP_DIR/tray.py" 2>/dev/null || true
+        sleep 1
+        su "$REAL_USER" -c "HOME='$USER_HOME' XDG_RUNTIME_DIR=/run/user/$UID_NUM DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/$UID_NUM/bus' DISPLAY='${DISPLAY:-:0}' WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-wayland-0}' setsid nohup $APP_DIR/tray.sh >/dev/null 2>&1 &" || true
+        echo "托盘服务已重启"
     fi
 } >> "$LOG_FILE" 2>&1
 

@@ -19,7 +19,7 @@ from threading import Event
 logger = logging.getLogger("AMD-HELPER")
 
 # Import existing components
-from screenshot import Screenshotter
+from screenshot import Screenshotter, CaptureCancelled, CaptureError
 from ocr import EasyOcrEngine
 from tts import get_tts_engine, PiperTtsEngine
 from audio import AudioPlayer
@@ -63,6 +63,27 @@ class OcrAndTtsProcessor:
         self.tts_engine = get_tts_engine(config=new_config)
         print("✅ TTS引擎已更新。")
 
+    def _speak_status(self, text: str, lang: str = "zh"):
+        """用当前 TTS 引擎朗读一句状态提示（截图失败/无文字等）。
+
+        视障用户看不到界面提示，必须有声音反馈，否则按了 F4 没反应时
+        完全不知道发生了什么。
+        """
+        try:
+            audio_suffix = '.wav' if isinstance(self.tts_engine, PiperTtsEngine) else '.mp3'
+            with tempfile.NamedTemporaryFile(suffix=audio_suffix, delete=False) as temp_audio_file:
+                audio_path = temp_audio_file.name
+            self._temp_files.append(audio_path)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self.tts_engine.synthesize(text, audio_path, lang=lang))
+            finally:
+                loop.close()
+            self.audio_player.play(audio_path, stop_event=self._stop_event)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"状态提示朗读失败: {exc}")
+
     def _cleanup_files(self):
         """清理所有临时文件。"""
         if not self._temp_files:
@@ -84,11 +105,16 @@ class OcrAndTtsProcessor:
         try:
             # 1. 立即进行截图
             logger.debug("步骤1: 开始截图...")
-            image_path = self.screenshotter.take_screenshot()
-
-            if not image_path:
+            try:
+                image_path = self.screenshotter.take_screenshot()
+            except CaptureCancelled:
                 logger.info("流程中断：用户取消了截图。")
                 return
+            except CaptureError as exc:
+                logger.error(f"截图失败: {exc}")
+                self._speak_status("截图失败，请重试")
+                return
+
             self._temp_files.append(image_path)
             logger.debug(f"截图完成: {image_path}")
 
@@ -97,6 +123,7 @@ class OcrAndTtsProcessor:
             text, ocr_lang = self.ocr_engine.recognize(image_path)
             if not text:
                 logger.info("流程中断：未识别到文字。")
+                self._speak_status("未识别到文字")
                 return
             
             logger.info(f"OCR 识别语言: {ocr_lang}，识别文字: {text[:50]}...")

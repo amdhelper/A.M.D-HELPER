@@ -1,63 +1,113 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-负责截图操作，统一使用 libshot 库的交互式截图功能。
+截图入口。
+
+真实工作交给同目录下的 capture.py（独立进程）：
+  * 先用 xdg-desktop-portal 抓一张全屏冻结图
+  * 再显示全屏选区覆盖层（鼠标十字准星，拖动圈选）
+  * 松开后裁切保存，返回文件路径
+
+为什么不在这里直接开 GTK 窗口：
+  tray.py 主进程已经在跑 pystray/GTK 事件循环，同进程再开一个 Gtk.main()
+  会和托盘菜单互相干扰；独立进程还能保证截图失败/卡死时不影响托盘服务。
 """
 
 import os
+import subprocess
+import sys
 import tempfile
-from pathlib import Path
+import time
 
-# libshot is expected to be in the project structure
-import libshot
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CAPTURE_SCRIPT = os.path.join(APP_DIR, "capture.py")
+CAPTURE_TIMEOUT = 240  # 秒；用户圈选最多等这么久
+
+
+class CaptureCancelled(Exception):
+    """用户按 Esc / 右键主动取消。"""
+
+
+class CaptureError(Exception):
+    """截图流程本身失败（拿不到屏幕、模块缺失等）。"""
+
 
 class Screenshotter:
-    """使用 libshot.capture_interactive() 提供最佳的交互式截图体验。"""
+    """调用 capture.py 完成“抓全屏 + 圈选 + 裁切”。"""
 
     def __init__(self):
-        """初始化截图工具。libshot 会自动选择最佳后端。"""
-        # The print statement from libshot's __init__ is now the source of truth
         pass
 
-    def take_screenshot(self) -> str | None:
+    def _child_env(self):
+        env = os.environ.copy()
+        # Wayland 会话下不要强制 X11 后端（会退化成 XWayland，拿不到真实画面）
+        if env.get("XDG_SESSION_TYPE") == "wayland" or env.get("WAYLAND_DISPLAY"):
+            env.pop("GDK_BACKEND", None)
+        env.setdefault("PYTHONNOUSERSITE", "1")
+        return env
+
+    def take_screenshot(self) -> str:
         """
-        执行交互式截图操作，返回截图文件的绝对路径。
-        如果截图失败或取消，则返回 None。
+        执行交互式截图，返回裁切后图片的绝对路径。
+        用户取消抛 CaptureCancelled，失败抛 CaptureError。
         """
-        print("🖼️  请选择截图区域...")
+        if not os.path.exists(CAPTURE_SCRIPT):
+            raise CaptureError(f"找不到截图模块: {CAPTURE_SCRIPT}")
+
+        fd, out_path = tempfile.mkstemp(suffix=".png", prefix="amdhelper_capture_")
+        os.close(fd)
         try:
-            # The single, unified entry point for the best interactive experience
-            image = libshot.capture_interactive()
+            os.unlink(out_path)
+        except OSError:
+            pass
 
-            if image is None:
-                print("❌ 截图取消或失败。")
-                return None
+        cmd = [
+            sys.executable,
+            CAPTURE_SCRIPT,
+            "--out",
+            out_path,
+            "--timeout",
+            str(CAPTURE_TIMEOUT),
+        ]
+        print("🖼️  请选择截图区域...")
+        started = time.time()
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=CAPTURE_TIMEOUT + 60,
+                env=self._child_env(),
+                cwd=APP_DIR,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise CaptureError("截图超时") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise CaptureError(f"启动截图进程失败: {exc}") from exc
 
-            # Save the Pillow Image object to a temporary file
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_image_file:
-                file_path = temp_image_file.name
-            
-            image.save(file_path, 'PNG')
+        stderr_tail = (proc.stderr or "").strip().splitlines()[-6:]
+        for line in stderr_tail:
+            print(line)
 
-            if Path(file_path).stat().st_size > 0:
-                print(f"✅ 截图成功，文件保存在: {file_path}")
-                return file_path
-            else:
-                print("❌ 截图失败，未生成有效的图片文件。")
-                if Path(file_path).exists():
-                    os.remove(file_path)
-                return None
-        except Exception as e:
-            print(f"❌ 截图过程中出现未知错误: {e}")
-            return None
+        if proc.returncode == 2:
+            print("⏹️  用户取消了截图")
+            raise CaptureCancelled()
 
-if __name__ == '__main__':
-    # 用于直接测试截图功能
-    print("正在测试新的交互式截图功能...")
+        if proc.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+            raise CaptureError(f"截图失败 (exit={proc.returncode}) {(proc.stdout or '').strip()}")
+
+        print(f"✅ 截图成功 ({time.time() - started:.1f}s): {out_path}")
+        return out_path
+
+
+if __name__ == "__main__":
+    screenshotter = Screenshotter()
     try:
-        screenshotter = Screenshotter()
-        screenshot_path = screenshotter.take_screenshot()
-        if screenshot_path:
-            print(f"✅ 测试成功，截图路径: {screenshot_path}")
-        else:
-            print("⏹️  测试结束，未获取到截图或操作被取消。")
-    except Exception as e:
-        print(f"🔥 测试失败: {e}")
+        path = screenshotter.take_screenshot()
+        print(f"✅ 测试成功，截图路径: {path}")
+    except CaptureCancelled:
+        print("⏹️  用户取消了截图")
+    except CaptureError as exc:
+        print(f"❌ 截图失败: {exc}")
