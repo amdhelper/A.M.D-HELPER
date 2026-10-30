@@ -232,7 +232,28 @@ def setup_xfce():
     return True
 
 
+def status_gnome():
+    """返回 (是否已绑定, "按键 命令")。"""
+    for path in _custom_list():
+        schema = f"{GNOME_SCHEMA}.custom-keybinding:{path}"
+        name = _gsettings_get([schema, "name"]).strip("'")
+        command = _gsettings_get([schema, "command"]).strip("'")
+        binding = _gsettings_get([schema, "binding"]).strip("'")
+        if name == SHORTCUT_NAME or command == COMMAND:
+            return True, f"{binding or '(空)'} {command}".strip()
+    return False, ""
+
+
 def main():
+    if "--status" in sys.argv[1:]:
+        desktop = _detect_desktop()
+        if desktop == "gnome":
+            ok, info = status_gnome()
+            print(f"BOUND {info}" if ok else "MISSING")
+            return 0 if ok else 1
+        print(f"UNSUPPORTED {desktop}")
+        return 1
+
     desktop = _detect_desktop()
     log(f"当前桌面环境: {desktop}")
 

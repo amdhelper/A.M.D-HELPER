@@ -54,6 +54,7 @@ class OcrAndTtsProcessor:
         self.audio_player = AudioPlayer()
         self._temp_files = []
         self._stop_event = Event()
+        self._busy = threading.Lock()
         print("✅ 所有核心引擎初始化完毕，服务就绪。")
 
     def reload_tts_engine(self, new_config: dict):
@@ -98,6 +99,30 @@ class OcrAndTtsProcessor:
         self._temp_files.clear()
 
     def run_full_process(self):
+        """执行截图 -> OCR -> TTS -> 音频播放的完整流程。
+
+        同一时刻只允许一个流程。用户朗读到一半又按 F4 时，先打断当前播放
+        再开始新的框选（否则要等一两分钟的音频播完，按键像是没反应）。
+        """
+        if not self._busy.acquire(blocking=False):
+            logger.info("上一次识别还没结束，打断播放后重试")
+            try:
+                self.audio_player.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"打断播放失败: {exc}")
+            if not self._busy.acquire(timeout=5):
+                logger.info("仍然忙碌，忽略本次触发")
+                return
+        try:
+            self._run_full_process()
+        finally:
+            self._busy.release()
+
+    def speak(self, text: str, lang: str = "zh"):
+        """公开的语音提示接口（托盘菜单/状态播报用，不阻塞调用方）。"""
+        threading.Thread(target=self._speak_status, args=(text, lang), daemon=True).start()
+
+    def _run_full_process(self):
         """执行截图 -> OCR -> TTS -> 音频播放的完整流程。"""
         logger.info("=== (核心) 收到请求，开始处理流程 ===")
         logger.debug(f"当前 TTS 引擎类型: {type(self.tts_engine).__name__}")

@@ -287,8 +287,10 @@ echo "Setting file permissions..."
 } >> "$LOG_FILE" 2>&1
 
 # --- 3. 自动绑定 F4 快捷键（GNOME / KDE / XFCE 自动识别）---
-# 具体逻辑在 /usr/share/a.m.d-helper/shortcut_setup.py（纯标准库、幂等），
-# 安装时以桌面用户身份执行一次；没赶上图形会话时由登录 autostart 再补一次。
+# 具体逻辑在 /usr/share/a.m.d-helper/shortcut_setup.py（纯标准库、幂等）。
+# 安装时以「正在使用图形桌面的那个用户」身份执行一次；抓不到图形会话时
+# 由登录 autostart 再补一次。判断依据不是 SUDO_USER（apt/软件中心安装时为空），
+# 而是 loginctl 活动会话 + 该用户 GUI 进程的真实环境变量。
 echo "Setting up keyboard shortcut..."
 {
     if [ -n "$USER_HOME" ] && [ -f "$APP_DIR/shortcut_setup.py" ]; then
@@ -296,18 +298,36 @@ echo "Setting up keyboard shortcut..."
         DBUS_ADDR="unix:path=/run/user/$UID_NUM/bus"
         SETUP_CMD="/usr/bin/python3 $APP_DIR/shortcut_setup.py"
 
-        if [ -S "/run/user/$UID_NUM/bus" ]; then
-            echo "检测到图形会话，立即绑定 F4..."
-            if su "$REAL_USER" -c "HOME='$USER_HOME' XDG_RUNTIME_DIR=/run/user/$UID_NUM DBUS_SESSION_BUS_ADDRESS='$DBUS_ADDR' DISPLAY='${DISPLAY:-:0}' $SETUP_CMD" 2>&1 | tee -a "$LOG_FILE"; then
-                echo "✅ F4 快捷键绑定成功"
-            else
-                echo "⚠️ 快捷键绑定失败，登录时会自动重试"
-            fi
-        else
-            echo "未检测到图形会话（可能通过 SSH 安装），登录后自动绑定"
+        # 从真实 GUI 进程继承环境，避免硬编码 :0 / wayland-0 猜错
+        SESS_DISPLAY="${DISPLAY:-}"
+        SESS_WAYLAND="${WAYLAND_DISPLAY:-}"
+        SESS_DESKTOP="${XDG_CURRENT_DESKTOP:-}"
+        GUI_PID=$(pgrep -u "$REAL_USER" -n -x gnome-shell 2>/dev/null || true)
+        [ -n "$GUI_PID" ] || GUI_PID=$(pgrep -u "$REAL_USER" -n -f "gnome-session|plasmashell|xfce4-session" 2>/dev/null || true)
+        if [ -n "$GUI_PID" ] && [ -r "/proc/$GUI_PID/environ" ]; then
+            ENV_DISPLAY=$(tr '\0' '\n' < "/proc/$GUI_PID/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)
+            ENV_WAYLAND=$(tr '\0' '\n' < "/proc/$GUI_PID/environ" | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1)
+            ENV_DESKTOP=$(tr '\0' '\n' < "/proc/$GUI_PID/environ" | sed -n 's/^XDG_CURRENT_DESKTOP=//p' | head -n 1)
+            [ -n "$ENV_DISPLAY" ] && SESS_DISPLAY="$ENV_DISPLAY"
+            [ -n "$ENV_WAYLAND" ] && SESS_WAYLAND="$ENV_WAYLAND"
+            [ -n "$ENV_DESKTOP" ] && SESS_DESKTOP="$ENV_DESKTOP"
         fi
 
-        # 登录兜底：dconf 被重置 / 换了桌面环境时自动补绑定
+        RUN_ENV="HOME=$USER_HOME XDG_RUNTIME_DIR=/run/user/$UID_NUM DBUS_SESSION_BUS_ADDRESS=$DBUS_ADDR DISPLAY=${SESS_DISPLAY:-:0} WAYLAND_DISPLAY=$SESS_WAYLAND XDG_CURRENT_DESKTOP=${SESS_DESKTOP:-GNOME}"
+
+        if [ -S "/run/user/$UID_NUM/bus" ]; then
+            echo "检测到图形会话 (display=${SESS_DISPLAY:-:0} wayland=${SESS_WAYLAND:-无} desktop=${SESS_DESKTOP:-未知})，立即绑定 F4..."
+            if su "$REAL_USER" -s /bin/bash -c "$RUN_ENV $SETUP_CMD" 2>&1 | tee -a "$LOG_FILE"; then
+                STATUS_LINE=$(su "$REAL_USER" -s /bin/bash -c "$RUN_ENV $SETUP_CMD --status" 2>/dev/null | head -n 1)
+                echo "快捷键校验: $STATUS_LINE" | tee -a "$LOG_FILE"
+            else
+                echo "⚠️ 快捷键绑定失败，登录时会自动重试" | tee -a "$LOG_FILE"
+            fi
+        else
+            echo "未检测到图形会话（可能通过 SSH 安装），登录后自动绑定" | tee -a "$LOG_FILE"
+        fi
+
+        # 登录兜底①：用户级 autostart，dconf 被重置 / 换桌面环境时自动补绑定
         AUTOSTART_DIR="$USER_HOME/.config/autostart"
         mkdir -p "$AUTOSTART_DIR"
         cat > "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" << DESKTOP_EOF
@@ -320,8 +340,20 @@ NoDisplay=true
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=5
 DESKTOP_EOF
-        chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop"
+        chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/a.m.d-helper-setup.desktop" 2>/dev/null || true
     fi
+
+    # 登录兜底②：系统级 autostart（安装时用户目录还不存在也能在登录后补上）
+    cat > /etc/xdg/autostart/a.m.d-helper-shortcut.desktop << DESKTOP_EOF2
+[Desktop Entry]
+Type=Application
+Name=A.M.D-HELPER Shortcut Setup
+Exec=/usr/bin/python3 /usr/share/a.m.d-helper/shortcut_setup.py
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=6
+DESKTOP_EOF2
 } >> "$LOG_FILE" 2>&1
 
 # --- 4. 升级场景：重启已在运行的托盘服务，让新代码立即生效 ---
@@ -363,6 +395,7 @@ pkill -f "$APP_DIR/tray.py" || true
 rm -f "$USER_HOME/.config/a.m.d-helper/setup-shortcut.sh"
 rm -f "$USER_HOME/.config/autostart/a.m.d-helper-setup.desktop"
 rm -f /etc/xdg/autostart/a.m.d-helper.desktop
+rm -f /etc/xdg/autostart/a.m.d-helper-shortcut.desktop
 
 echo "Cleanup complete." >> "$LOG_FILE"
 exit 0

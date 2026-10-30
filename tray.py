@@ -51,6 +51,17 @@ console_handler.setFormatter(console_formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
+# 诊断用：kill -USR1 <tray_pid> 会把所有线程的调用栈写进日志。
+# 排查「按了 F4 没反应 / 音频停不下来 / 托盘卡死」这类静默故障时，
+# 先看栈，别靠猜（Python 3.14 + faulthandler 是标准库，不引入依赖）。
+try:
+    import faulthandler
+
+    _FAULT_FILE = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
+    faulthandler.register(signal.SIGUSR1, file=_FAULT_FILE, all_threads=True)
+except Exception:  # noqa: BLE001
+    pass
+
 # 确保可以从当前目录导入模块
 sys.path.append(os.path.dirname(__file__))
 from core import OcrAndTtsProcessor
@@ -379,6 +390,28 @@ def copy_to_clipboard(text: str) -> bool:
     return False
 
 
+def _child_gui_env():
+    """给 gnome-control-center 等 GUI 子进程准备干净环境。
+
+    托盘进程自己的 GDK_BACKEND 可能被设成 x11（pystray 需要 X11 托盘），
+    子进程继承后会退化成 XWayland，在 Ubuntu 26.04 上报
+    "Authorization required / Failed to open display" ——
+    表现就是托盘「打开快捷键设置」点了没反应。
+    """
+    env = os.environ.copy()
+    env.pop("GDK_BACKEND", None)
+    uid = os.getuid()
+    env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{uid}")
+    env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{uid}/bus")
+    if not env.get("XAUTHORITY"):
+        import glob as _glob
+
+        cands = sorted(_glob.glob(f"/run/user/{uid}/.mutter-Xwaylandauth.*"))
+        if cands:
+            env["XAUTHORITY"] = cands[-1]
+    return env
+
+
 def open_system_settings(kind="keyboard"):
     """打开系统设置面板（kind: keyboard=快捷键 / autostart=自启动）。"""
     desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
@@ -395,7 +428,6 @@ def open_system_settings(kind="keyboard"):
         if "gnome" in desktop or "ubuntu" in desktop or "unity" in desktop:
             candidates = [
                 ["gnome-control-center", "keyboard"],
-                ["gnome-control-center", "keyboard", "shortcuts"],
             ]
         elif "kde" in desktop or "plasma" in desktop:
             candidates = [["systemsettings5", "shortcuts"], ["systemsettings", "kcm_keys"]]
@@ -407,12 +439,17 @@ def open_system_settings(kind="keyboard"):
             ["xfce4-keyboard-settings"],
         ]
 
+    env = _child_gui_env()
     for cmd in candidates:
         if not shutil.which(cmd[0]):
             continue
         try:
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                start_new_session=True,
             )
             # GUI 程序会一直活着（或转发给已运行实例），不能等它退出
             try:
@@ -780,6 +817,14 @@ class AppTray:
                 _("lang_switched_message")
             )
 
+    def _speak(self, text):
+        """视障用户看不到通知气泡，关键操作必须给语音反馈。"""
+        try:
+            if self.processor is not None:
+                self.processor.speak(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"语音提示失败: {exc}")
+
     def _copy_command_action(self, command_to_copy):
         ok = copy_to_clipboard(command_to_copy)
         if ok:
@@ -787,16 +832,21 @@ class AppTray:
                 _("command_copied_notification"),
                 _("command_copied_message") + "\n" + command_to_copy,
             )
+            self._speak(_("command_copied_message"))
         else:
             self.icon.notify(_("error_pyperclip_notification"), _("error_pyperclip_message"))
+            self._speak(_("error_pyperclip_message"))
 
     def _open_settings(self, kind="keyboard"):
         def worker():
-            if not open_system_settings(kind):
+            if open_system_settings(kind):
+                self._speak("已打开系统快捷键设置。请在键盘设置里找到查看及自定义快捷键。" if kind == "keyboard" else "已打开启动应用程序设置。")
+            else:
                 self.icon.notify(
                     _("error_open_settings_notification"),
                     _("error_open_settings_message"),
                 )
+                self._speak(_("error_open_settings_message"))
 
         # 别在托盘菜单线程里等 GUI 程序，避免菜单卡住
         threading.Thread(target=worker, daemon=True).start()
@@ -818,8 +868,10 @@ class AppTray:
                 logger.warning(f"快捷键修复异常: {exc}")
             if ok:
                 self.icon.notify(_("shortcut_fixed_notification"), _("shortcut_fixed_message"))
+                self._speak(_("shortcut_fixed_message"))
             else:
                 self.icon.notify(_("shortcut_failed_notification"), _("shortcut_failed_message"))
+                self._speak(_("shortcut_failed_message"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -828,8 +880,10 @@ class AppTray:
         threading.Thread(target=show_about_window_tk, daemon=True).start()
 
     def build_menu(self):
-        f4_command = f"python3 {os.path.join(SCRIPT_DIR, 'f4.py')}"
-        f1_command = f"python3 {os.path.join(SCRIPT_DIR, 'f1.py')}"
+        # 复制给用户粘贴到「系统设置 → 键盘快捷键」的命令必须是 run.sh：
+        # 直接复制 "python3 f4.py" 会用系统 python 跑，缺 dbus_next，粘进去按了没反应。
+        f4_command = os.path.join(SCRIPT_DIR, "run.sh")
+        f1_command = os.path.join(SCRIPT_DIR, "run_hover.sh")
         tray_command = f"bash {os.path.join(SCRIPT_DIR, 'tray.sh')}"
 
         return Menu(

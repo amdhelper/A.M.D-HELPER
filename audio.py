@@ -30,6 +30,11 @@ class AudioPlayer:
             # --- 结束 ---
 
             self._stop_event = threading.Event()
+            # 当前这次 play() 真正在轮询的那个 Event（由调用方传入）。
+            # stop() 必须同时 set 它：core.py 传进来的是 processor 自己的
+            # _stop_event，跟 AudioPlayer._stop_event 不是同一个对象，
+            # 只 set 自己的那个，play() 里的循环永远看不到，音频停不下来。
+            self._active_event = None
             print("✅ 音频播放器初始化完成。")
         except ImportError:
             print("缺少 pygame 依赖包。")
@@ -57,7 +62,8 @@ class AudioPlayer:
             
         if stop_event is None:
             stop_event = self._stop_event
-        
+
+        self._active_event = stop_event
         try:
             # 强制检查并重新初始化，确保播放总是有效
             if not self._pygame.mixer.get_init():
@@ -85,8 +91,11 @@ class AudioPlayer:
             stop_event.clear()
 
     def stop(self):
-        """停止当前正在播放的音频。"""
+        """停止当前正在播放的音频（必须同时 set 调用方传进来的那个 Event）。"""
         self._stop_event.set()
+        active = getattr(self, "_active_event", None)
+        if active is not None:
+            active.set()
 
     def quit(self):
         """退出 Pygame，释放资源。"""
