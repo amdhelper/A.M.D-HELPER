@@ -61,6 +61,8 @@ if [ ! -f "$APP_DIR/f4.py" ]; then
 fi
 
 # 激活虚拟环境
+# 屏蔽 ~/.local 的 site-packages，避免用户目录里的旧包混入（与 tray.sh 一致）
+export PYTHONNOUSERSITE=1
 source "$VENV_ACTIVATOR"
 
 # 直接运行 Python 脚本，减少日志输出以加快启动速度

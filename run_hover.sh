@@ -23,6 +23,7 @@ echo "App Directory: $APP_DIR" >> "$LOG_FILE"
 
 # Activate the virtual environment before running the script.
 if [ -f "$VENV_ACTIVATOR" ]; then
+    export PYTHONNOUSERSITE=1
     source "$VENV_ACTIVATOR"
 else
     echo "FATAL: Python virtual environment activator not found at $VENV_ACTIVATOR." >> "$LOG_FILE"

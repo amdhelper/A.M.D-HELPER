@@ -89,7 +89,13 @@ echo "------------------------------------" >> "$LOG_FILE"
 echo "Starting A.M.D-HELPER post-installation setup..."
 echo "A detailed log is available in $LOG_FILE"
 
-REAL_USER=${SUDO_USER:-$(whoami)}
+REAL_USER=${SUDO_USER:-}
+if [ -z "$REAL_USER" ] || [ "$REAL_USER" = "root" ]; then
+    # 直接以 root 运行 dpkg（pkexec / 图形安装器）时 SUDO_USER 为空，
+    # 从登录会话推断真实桌面用户，避免把快捷键和 autostart 写到 /root。
+    REAL_USER=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$3 != "" && $3 != "root" {print $3; exit}')
+fi
+[ -n "$REAL_USER" ] || REAL_USER=$(whoami)
 USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 echo "Installation user: $REAL_USER, HOME: $USER_HOME" >> "$LOG_FILE"
 
@@ -424,7 +430,11 @@ LOG_FILE="/tmp/a.m.d-helper-uninstall.log"
 
 echo "Starting cleanup..." > "$LOG_FILE"
 
-REAL_USER=${SUDO_USER:-$(whoami)}
+REAL_USER=${SUDO_USER:-}
+if [ -z "$REAL_USER" ] || [ "$REAL_USER" = "root" ]; then
+    REAL_USER=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$3 != "" && $3 != "root" {print $3; exit}')
+fi
+[ -n "$REAL_USER" ] || REAL_USER=$(whoami)
 USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
 pkill -f "$APP_DIR/tray.py" || true
