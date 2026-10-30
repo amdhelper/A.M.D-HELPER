@@ -72,7 +72,8 @@ if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS -r "$AP
 fi
 
 echo "安装本地 libshot ..." | tee -a "$LOG_FILE"
-"$VENV_DIR/bin/pip" install "$APP_DIR/libshot" >> "$LOG_FILE" 2>&1 \
+"$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS setuptools wheel >> "$LOG_FILE" 2>&1 || true
+"$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS --no-build-isolation "$APP_DIR/libshot" >> "$LOG_FILE" 2>&1 \
     || { echo "错误: libshot 安装失败，详见 $LOG_FILE" | tee -a "$LOG_FILE"; exit 1; }
 
 chown -R root:root "$VENV_DIR" 2>/dev/null || true

@@ -162,7 +162,10 @@ if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS -r "$AP
 fi
 
 echo "Step 4/5: Installing local libshot library..."
-if ! "$VENV_DIR/bin/pip" install "$APP_DIR/libshot" 2>&1 | tee -a "$LOG_FILE"; then
+# libshot 是纯 Python 包（setuptools 构建）。必须禁用 build isolation：
+# 否则 pip 会去默认 PyPI 拉 setuptools（国内网络经常卡死或超时）。
+"$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS setuptools wheel >> "$LOG_FILE" 2>&1 || true
+if ! "$VENV_DIR/bin/pip" install $PIP_TIMEOUT_OPTION $PIP_MIRROR_OPTIONS --no-build-isolation "$APP_DIR/libshot" 2>&1 | tee -a "$LOG_FILE"; then
     echo "FATAL: Failed to install local libshot library." | tee -a "$LOG_FILE"
     exit 1
 fi
